@@ -8,7 +8,7 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -47,8 +47,12 @@ export default function Home() {
       } else {
         setMessages((prev) => [...prev, '❌ Réponse invalide']);
       }
-    } catch (error) {
-      console.error('Erreur :', error);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        console.error('Erreur :', error.message);
+      } else {
+        console.error('Erreur inconnue');
+      }
       setMessages((prev) => [...prev, '⚠️ Une erreur est survenue']);
     }
 
@@ -71,8 +75,12 @@ export default function Home() {
       const audioUrl = URL.createObjectURL(blob);
       const audio = new Audio(audioUrl);
       await audio.play();
-    } catch (err) {
-      console.error('Erreur lors de la lecture audio :', err);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error('Erreur lors de la lecture audio :', err.message);
+      } else {
+        console.error('Erreur inconnue pendant la lecture audio');
+      }
     }
   };
 
@@ -112,15 +120,23 @@ export default function Home() {
           } else {
             setMessages((prev) => [...prev, '❌ Échec de transcription']);
           }
-        } catch (err) {
-          console.error('Erreur transcription :', err);
+        } catch (err: unknown) {
+          if (err instanceof Error) {
+            console.error('Erreur transcription :', err.message);
+          } else {
+            console.error('Erreur inconnue pendant la transcription');
+          }
           setMessages((prev) => [...prev, '⚠️ Erreur serveur transcription']);
         }
       };
 
       mediaRecorder.start();
-    } catch (error) {
-      console.error('Erreur micro :', error);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        console.error('Erreur micro :', error.message);
+      } else {
+        console.error('Erreur inconnue micro');
+      }
       alert("Erreur lors de l'accès au micro.");
       setRecording(false);
     }

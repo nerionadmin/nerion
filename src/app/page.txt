@@ -1,5 +1,5 @@
 'use client';
-import { Mic, Volume2, VolumeX } from 'lucide-react';
+import { Mic } from 'lucide-react';
 import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 
@@ -8,8 +8,6 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const handleSubmit = async (customInput?: string) => {
@@ -56,8 +54,6 @@ export default function Home() {
   };
 
   const speak = async (text: string) => {
-    if (!isSpeakerOn) return;
-
     try {
       const res = await fetch('/api/voice', {
         method: 'POST',
@@ -78,6 +74,13 @@ export default function Home() {
 
   const handleVoiceInput = async () => {
     try {
+      const unlockAudio = () => {
+        const silentAudio = new Audio();
+        silentAudio.play().catch(() => {});
+        document.removeEventListener('click', unlockAudio);
+      };
+      document.addEventListener('click', unlockAudio, { once: true });
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       const audioChunks: Blob[] = [];
@@ -126,15 +129,6 @@ export default function Home() {
     }
   };
 
-  const unlockAudioContext = () => {
-    if (audioUnlocked) return;
-
-    const audio = new Audio();
-    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
-    audio.play().catch(() => {});
-    setAudioUnlocked(true);
-  };
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -172,20 +166,6 @@ export default function Home() {
             className="flex-1 min-w-[150px] w-full sm:w-auto h-14 px-4 py-3 bg-[#1E293B] text-[#F8FAFC] text-base sm:text-lg rounded-lg placeholder-[#94A3B8] shadow-inner focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
           />
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                setIsSpeakerOn(!isSpeakerOn);
-                unlockAudioContext();
-              }}
-              className={`h-14 w-14 rounded-lg flex items-center justify-center transition ${
-                isSpeakerOn
-                  ? 'bg-[#1E293B] text-[#3B82F6] hover:bg-[#334155]'
-                  : 'bg-gray-700 text-gray-400'
-              }`}
-              title={isSpeakerOn ? 'Désactiver la voix' : 'Activer la voix'}
-            >
-              {isSpeakerOn ? <Volume2 size={22} /> : <VolumeX size={22} />}
-            </button>
             <button
               onClick={handleVoiceInput}
               className={`h-14 w-14 rounded-lg flex items-center justify-center transition ${

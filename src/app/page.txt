@@ -1,5 +1,5 @@
 'use client';
-import { Mic } from 'lucide-react';
+import { Mic, Volume2, VolumeX, Upload } from 'lucide-react'; // ajout de Upload
 import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 
@@ -8,7 +8,39 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const USER_ID = "demo_user_1"; // provisoire
+
+  // 📌 Nouvelle fonction : upload image vers Supabase
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('userId', USER_ID); // ✅ ajout pour identifier l’utilisateur
+
+      // Endpoint API pour upload vers Supabase (à créer côté serveur)
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setMessages((prev) => [...prev, `📷 Image envoyée : ${data.url}`]);
+      } else {
+        setMessages((prev) => [...prev, '⚠️ Erreur upload image']);
+      }
+    } catch (err) {
+      console.error('Erreur upload image', err);
+      setMessages((prev) => [...prev, '⚠️ Erreur upload image']);
+    }
+  };
 
   const handleSubmit = async (customInput?: string) => {
     const promptToSend = customInput ?? input;
@@ -23,11 +55,11 @@ export default function Home() {
       const response = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptToSend }),
+        body: JSON.stringify({ userId: USER_ID, message: promptToSend }),
       });
 
       const data = await response.json();
-      if (data.result) {
+      if (response.ok && data.reply) {
         setMessages((prev) => [...prev, '🤖 ']);
 
         let i = 0;
@@ -35,18 +67,18 @@ export default function Home() {
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             const updated = prev.slice(0, -1);
-            return [...updated, '🤖 ' + data.result.slice(0, i)];
+            return [...updated, '🤖 ' + data.reply.slice(0, i)];
           });
           i++;
-          if (i > data.result.length) clearInterval(interval);
+          if (i > data.reply.length) clearInterval(interval);
         }, 30);
 
-        speak(data.result);
+        speak(data.reply);
       } else {
         setMessages((prev) => [...prev, '❌ Réponse invalide']);
       }
-    } catch (error) {
-      console.error('Erreur :', error);
+    } catch (error: unknown) {
+      console.error(error);
       setMessages((prev) => [...prev, '⚠️ Une erreur est survenue']);
     }
 
@@ -54,6 +86,8 @@ export default function Home() {
   };
 
   const speak = async (text: string) => {
+    if (!isSpeakerOn) return;
+
     try {
       const res = await fetch('/api/voice', {
         method: 'POST',
@@ -68,19 +102,12 @@ export default function Home() {
       const audio = new Audio(audioUrl);
       await audio.play();
     } catch (err) {
-      console.error('Erreur lors de la lecture audio :', err);
+      console.error('Erreur audio :', err);
     }
   };
 
   const handleVoiceInput = async () => {
     try {
-      const unlockAudio = () => {
-        const silentAudio = new Audio();
-        silentAudio.play().catch(() => {});
-        document.removeEventListener('click', unlockAudio);
-      };
-      document.addEventListener('click', unlockAudio, { once: true });
-
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       const audioChunks: Blob[] = [];
@@ -116,17 +143,26 @@ export default function Home() {
             setMessages((prev) => [...prev, '❌ Échec de transcription']);
           }
         } catch (err) {
-          console.error('Erreur transcription :', err);
+          console.error('Erreur transcription', err);
           setMessages((prev) => [...prev, '⚠️ Erreur serveur transcription']);
         }
       };
 
       mediaRecorder.start();
     } catch (error) {
-      console.error('Erreur micro :', error);
+      console.error('Erreur micro', error);
       alert("Erreur lors de l'accès au micro.");
       setRecording(false);
     }
+  };
+
+  const unlockAudioContext = () => {
+    if (audioUnlocked) return;
+
+    const audio = new Audio();
+    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
+    audio.play().catch(() => {});
+    setAudioUnlocked(true);
   };
 
   useEffect(() => {
@@ -166,6 +202,23 @@ export default function Home() {
             className="flex-1 min-w-[150px] w-full sm:w-auto h-14 px-4 py-3 bg-[#1E293B] text-[#F8FAFC] text-base sm:text-lg rounded-lg placeholder-[#94A3B8] shadow-inner focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
           />
           <div className="flex items-center gap-2">
+            {/* Bouton haut-parleur */}
+            <button
+              onClick={() => {
+                setIsSpeakerOn(!isSpeakerOn);
+                unlockAudioContext();
+              }}
+              className={`h-14 w-14 rounded-lg flex items-center justify-center transition ${
+                isSpeakerOn
+                  ? 'bg-[#1E293B] text-[#3B82F6] hover:bg-[#334155]'
+                  : 'bg-gray-700 text-gray-400'
+              }`}
+              title={isSpeakerOn ? 'Désactiver la voix' : 'Activer la voix'}
+            >
+              {isSpeakerOn ? <Volume2 size={22} /> : <VolumeX size={22} />}
+            </button>
+
+            {/* Bouton micro */}
             <button
               onClick={handleVoiceInput}
               className={`h-14 w-14 rounded-lg flex items-center justify-center transition ${
@@ -175,6 +228,14 @@ export default function Home() {
             >
               <Mic size={22} />
             </button>
+
+            {/* 📷 Bouton upload image */}
+            <label className="h-14 w-14 bg-[#1E293B] text-[#94A3B8] hover:bg-[#334155] rounded-lg flex items-center justify-center cursor-pointer transition" title="Uploader une image">
+              <Upload size={22} />
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+            </label>
+
+            {/* Bouton envoyer */}
             <button
               onClick={() => handleSubmit()}
               disabled={loading}

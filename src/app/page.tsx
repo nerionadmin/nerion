@@ -1,5 +1,5 @@
 'use client';
-import { Mic, Volume2, VolumeX } from 'lucide-react';
+import { Mic, Volume2, VolumeX, Upload } from 'lucide-react';
 import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 
@@ -11,6 +11,58 @@ export default function Home() {
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const USER_ID = "demo_user_1"; // provisoire
+
+  // 📌 Charger l'historique au montage
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch(`/api/history?userId=${USER_ID}`);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.messages)) {
+          setMessages(
+            data.messages.map((m: any) =>
+              m.role === "user" ? `🧠 ${m.content}` : `🤖 ${m.content}`
+            )
+          );
+        }
+      } catch (err) {
+        console.error("Erreur chargement historique", err);
+      }
+    };
+    fetchHistory();
+  }, []);
+
+  // 📌 Nouvelle fonction : upload image vers Supabase
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('userId', USER_ID);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setMessages((prev) => [
+          ...prev,
+          `📷 <img src="${data.url}" alt="Image uploadée" class="max-w-full rounded-lg mt-2" />`
+        ]);
+      } else {
+        setMessages((prev) => [...prev, '⚠️ Erreur upload image']);
+      }
+    } catch (err) {
+      console.error('Erreur upload image', err);
+      setMessages((prev) => [...prev, '⚠️ Erreur upload image']);
+    }
+  };
 
   const handleSubmit = async (customInput?: string) => {
     const promptToSend = customInput ?? input;
@@ -25,11 +77,11 @@ export default function Home() {
       const response = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptToSend }),
+        body: JSON.stringify({ userId: USER_ID, message: promptToSend }),
       });
 
       const data = await response.json();
-      if (data.result) {
+      if (response.ok && data.reply) {
         setMessages((prev) => [...prev, '🤖 ']);
 
         let i = 0;
@@ -37,22 +89,18 @@ export default function Home() {
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             const updated = prev.slice(0, -1);
-            return [...updated, '🤖 ' + data.result.slice(0, i)];
+            return [...updated, '🤖 ' + data.reply.slice(0, i)];
           });
           i++;
-          if (i > data.result.length) clearInterval(interval);
+          if (i > data.reply.length) clearInterval(interval);
         }, 30);
 
-        speak(data.result);
+        speak(data.reply);
       } else {
         setMessages((prev) => [...prev, '❌ Réponse invalide']);
       }
     } catch (error: unknown) {
-      if (error instanceof Error) {
-        console.error('Erreur :', error.message);
-      } else {
-        console.error('Erreur inconnue');
-      }
+      console.error(error);
       setMessages((prev) => [...prev, '⚠️ Une erreur est survenue']);
     }
 
@@ -75,12 +123,8 @@ export default function Home() {
       const audioUrl = URL.createObjectURL(blob);
       const audio = new Audio(audioUrl);
       await audio.play();
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        console.error('Erreur lors de la lecture audio :', err.message);
-      } else {
-        console.error('Erreur inconnue pendant la lecture audio');
-      }
+    } catch (err) {
+      console.error('Erreur audio :', err);
     }
   };
 
@@ -120,23 +164,15 @@ export default function Home() {
           } else {
             setMessages((prev) => [...prev, '❌ Échec de transcription']);
           }
-        } catch (err: unknown) {
-          if (err instanceof Error) {
-            console.error('Erreur transcription :', err.message);
-          } else {
-            console.error('Erreur inconnue pendant la transcription');
-          }
+        } catch (err) {
+          console.error('Erreur transcription', err);
           setMessages((prev) => [...prev, '⚠️ Erreur serveur transcription']);
         }
       };
 
       mediaRecorder.start();
-    } catch (error: unknown) {
-      if (error instanceof Error) {
-        console.error('Erreur micro :', error.message);
-      } else {
-        console.error('Erreur inconnue micro');
-      }
+    } catch (error) {
+      console.error('Erreur micro', error);
       alert("Erreur lors de l'accès au micro.");
       setRecording(false);
     }
@@ -170,7 +206,7 @@ export default function Home() {
               key={i}
               className="w-full bg-[#1E293B] text-[#F8FAFC] p-4 rounded-md break-words space-y-2"
             >
-              <p>{msg}</p>
+              <div dangerouslySetInnerHTML={{ __html: msg }} />
             </div>
           ))}
           <div ref={bottomRef} />
@@ -202,6 +238,7 @@ export default function Home() {
             >
               {isSpeakerOn ? <Volume2 size={22} /> : <VolumeX size={22} />}
             </button>
+
             <button
               onClick={handleVoiceInput}
               className={`h-14 w-14 rounded-lg flex items-center justify-center transition ${
@@ -211,6 +248,12 @@ export default function Home() {
             >
               <Mic size={22} />
             </button>
+
+            <label className="h-14 w-14 bg-[#1E293B] text-[#94A3B8] hover:bg-[#334155] rounded-lg flex items-center justify-center cursor-pointer transition" title="Uploader une image">
+              <Upload size={22} />
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+            </label>
+
             <button
               onClick={() => handleSubmit()}
               disabled={loading}

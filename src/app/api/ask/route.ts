@@ -1,73 +1,107 @@
-import { NextResponse } from 'next/server';
-import openai from '@/lib/openai';
-import { getMemory, setMemory } from '@/lib/upstash';
+export const runtime = "nodejs";
 
-type Message = {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-};
+import { NextResponse } from "next/server";
+import OpenAI from "openai";
+import { supabaseServer } from "@/lib/supabase";
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 export async function POST(req: Request) {
   try {
-    const { prompt } = await req.json();
-
-    if (!prompt || typeof prompt !== 'string') {
-      return NextResponse.json({ error: 'Prompt invalide.' }, { status: 400 });
+    const { userId, message } = await req.json();
+    if (!userId || !message) {
+      return NextResponse.json(
+        { error: "userId and message required" },
+        { status: 400 }
+      );
     }
 
-    // 🧠 Récupère l'historique complet depuis Upstash
-    const previous = await getMemory('chat-history');
-    let history: Message[] = [];
+    const db = supabaseServer();
 
-    if (previous) {
-      try {
-        const parsed = JSON.parse(previous);
-        if (Array.isArray(parsed)) {
-          history = parsed.filter(
-            (msg): msg is Message =>
-              msg &&
-              typeof msg === 'object' &&
-              typeof msg.role === 'string' &&
-              typeof msg.content === 'string' &&
-              ['system', 'user', 'assistant'].includes(msg.role)
-          );
-        } else {
-          console.warn('Historique non valide, réinitialisation.');
-        }
-      } catch (e) {
-        console.warn('Erreur de parsing, historique réinitialisé.');
-      }
-    }
+    // 1) Stocker le message utilisateur
+    await db.from("messages").insert({
+      user_id: userId,
+      role: "user",
+      content: message,
+    });
 
-    // 👨‍💻 Ajoute le nouveau prompt
-    history.push({ role: 'user', content: prompt });
+    // 2) Récupérer l’historique récent
+    const { data: recent } = await db
+      .from("messages")
+      .select("role, content")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(12);
 
-    // 🧠 Construit les messages à envoyer à OpenAI
-    const messages: Message[] = [
-      {
-        role: 'system',
-        content:
-          "Tu es un miroir intelligent de l'utilisateur. Tu retiens tout ce qu’il partage de personnel (prénom, âge, goûts, émotions, souvenirs, intentions, etc.), tu t’adaptes à sa personnalité, son ton, ses croyances, son style, son humour. Ne redis jamais que tu es une IA. Parle avec naturel, chaleur ou froideur selon lui. Chaque interaction t’imprègne un peu plus de lui.",
-      },
-      ...history,
-    ];
+    const history = (recent || []).reverse();
 
-    // 🔍 Appel OpenAI
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages,
+    // 3) Demander une réponse à l’IA
+    const chat = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "Tu es une IA attentive et aidante." },
+        ...history.map((m: any) => ({ role: m.role, content: m.content })),
+        { role: "user", content: message },
+      ],
       temperature: 0.7,
     });
 
-    const response = completion.choices[0].message.content ?? '';
+    const reply = chat.choices[0]?.message?.content?.trim() || "…";
 
-    // 💾 Sauvegarde la réponse
-    history.push({ role: 'assistant', content: response });
-    await setMemory('chat-history', JSON.stringify(history));
+    // 4) Extraire des souvenirs -> insérer dans `memories` (userid, content, type)
+    const extraction = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "Analyse ce message et retourne un JSON compact {items: [{kind, content, importance}]} avec les faits importants, préférences, valeurs ou objectifs. Réponds uniquement en JSON.",
+        },
+        { role: "user", content: message },
+      ],
+      temperature: 0,
+      response_format: { type: "json_object" as const },
+    });
 
-    return NextResponse.json({ result: response });
-  } catch (error) {
-    console.error('Erreur OpenAI :', error);
-    return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });
+    let items: Array<{ kind?: string; content: string; importance?: number }> =
+      [];
+    try {
+      const parsed = JSON.parse(extraction.choices[0].message?.content || "{}");
+      items = parsed.items || [];
+    } catch {
+      // si le parsing échoue, on laissera "items" vide et on insèrera le message brut
+    }
+
+    if (items.length > 0) {
+      await db.from("memories").insert(
+        items.map((it) => ({
+          userid: userId,                 // ⚠️ ta colonne s'appelle bien "userid"
+          content: it.content,            // texte du souvenir
+          type: it.kind || "text",        // ex: 'fact', 'preference'… sinon 'text'
+        }))
+      );
+    } else {
+      // fallback : on mémorise au moins le message en clair
+      await db.from("memories").insert({
+        userid: userId,
+        content: message,
+        type: "text",
+      });
+    }
+
+    // 5) Sauvegarder la réponse
+    await db.from("messages").insert({
+      user_id: userId,
+      role: "assistant",
+      content: reply,
+    });
+
+    return NextResponse.json({ reply, saved_memories: items.length || 1 });
+  } catch (e: any) {
+    console.error(e);
+    return NextResponse.json(
+      { error: e?.message || "Server error" },
+      { status: 500 }
+    );
   }
 }

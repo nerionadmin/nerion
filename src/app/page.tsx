@@ -204,7 +204,7 @@ export default function Home() {
     <main className="flex flex-col h-screen bg-[#0F172A] text-[#F8FAFC]">
       <header className="text-center p-4 bg-[#0F172A] border-b border-[#1E293B]">
         <div className="flex justify-center items-center">
-          <Image src="/nerion.png" alt="Nerion AI Logo" width={300} height={175} priority />
+          <Image src="/nerion.png" alt="Nerion AI Logo" width={200} height={100} priority />
         </div>
       </header>
 

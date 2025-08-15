@@ -6,9 +6,22 @@ import { supabaseServer } from "@/lib/supabase";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
+type MessageRecord = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+type MemoryItem = {
+  kind?: string;
+  content: string;
+  importance?: number;
+};
+
 export async function POST(req: Request) {
   try {
-    const { userId, message } = await req.json();
+    const { userId, message }: { userId?: string; message?: string } =
+      await req.json();
+
     if (!userId || !message) {
       return NextResponse.json(
         { error: "userId and message required" },
@@ -33,14 +46,19 @@ export async function POST(req: Request) {
       .order("created_at", { ascending: false })
       .limit(12);
 
-    const history = (recent || []).reverse();
+    const history: MessageRecord[] = Array.isArray(recent)
+      ? (recent as MessageRecord[])
+      : [];
 
     // 3) Demander une réponse à l’IA
     const chat = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: "Tu es une IA attentive et aidante." },
-        ...history.map((m: any) => ({ role: m.role, content: m.content })),
+        ...history.map((m: MessageRecord) => ({
+          role: m.role,
+          content: m.content,
+        })),
         { role: "user", content: message },
       ],
       temperature: 0.7,
@@ -48,7 +66,7 @@ export async function POST(req: Request) {
 
     const reply = chat.choices[0]?.message?.content?.trim() || "…";
 
-    // 4) Extraire des souvenirs -> insérer dans `memories` (userid, content, type)
+    // 4) Extraire des souvenirs -> insérer dans `memories`
     const extraction = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -63,25 +81,25 @@ export async function POST(req: Request) {
       response_format: { type: "json_object" as const },
     });
 
-    let items: Array<{ kind?: string; content: string; importance?: number }> =
-      [];
+    let items: MemoryItem[] = [];
     try {
-      const parsed = JSON.parse(extraction.choices[0].message?.content || "{}");
-      items = parsed.items || [];
+      const parsed = JSON.parse(
+        extraction.choices[0].message?.content || "{}"
+      );
+      items = Array.isArray(parsed.items) ? (parsed.items as MemoryItem[]) : [];
     } catch {
-      // si le parsing échoue, on laissera "items" vide et on insèrera le message brut
+      // parsing échoué, on laisse items vide
     }
 
     if (items.length > 0) {
       await db.from("memories").insert(
-        items.map((it) => ({
-          userid: userId,                 // ⚠️ ta colonne s'appelle bien "userid"
-          content: it.content,            // texte du souvenir
-          type: it.kind || "text",        // ex: 'fact', 'preference'… sinon 'text'
+        items.map((it: MemoryItem) => ({
+          userid: userId,
+          content: it.content,
+          type: it.kind || "text",
         }))
       );
     } else {
-      // fallback : on mémorise au moins le message en clair
       await db.from("memories").insert({
         userid: userId,
         content: message,
@@ -97,11 +115,12 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ reply, saved_memories: items.length || 1 });
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json(
-      { error: e?.message || "Server error" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    if (e instanceof Error) {
+      console.error(e);
+      return NextResponse.json({ error: e.message }, { status: 500 });
+    }
+    console.error("Unknown error", e);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

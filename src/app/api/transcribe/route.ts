@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { Readable } from 'stream';
 import openai from '@/lib/openai';
 
 export const maxDuration = 30; // facultatif : limite l'enregistrement à 30s
@@ -14,8 +13,6 @@ export async function POST(req: Request) {
     }
 
     const buffer = Buffer.from(await audioFile.arrayBuffer());
-
-    const stream = Readable.from(buffer);
     const file = new File([buffer], 'voice.webm', { type: 'audio/webm' });
 
     const transcript = await openai.audio.transcriptions.create({
@@ -26,8 +23,9 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ text: transcript.text });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Erreur transcription :', err);
-    return NextResponse.json({ error: 'Erreur de transcription' }, { status: 500 });
+    const message = err instanceof Error ? err.message : 'Erreur de transcription';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

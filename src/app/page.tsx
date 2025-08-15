@@ -3,6 +3,14 @@ import { Mic, Volume2, VolumeX, Upload } from 'lucide-react';
 import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 
+type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+// Petit type local pour l'événement de MediaRecorder
+type DataAvailableEvent = { data: Blob };
+
 export default function Home() {
   const [messages, setMessages] = useState<string[]>([]);
   const [input, setInput] = useState('');
@@ -19,10 +27,10 @@ export default function Home() {
     const fetchHistory = async () => {
       try {
         const res = await fetch(`/api/history?userId=${USER_ID}`);
-        const data = await res.json();
+        const data: { messages?: ChatMessage[] } = await res.json();
         if (res.ok && Array.isArray(data.messages)) {
           setMessages(
-            data.messages.map((m: any) =>
+            data.messages.map((m: ChatMessage) =>
               m.role === "user" ? `🧠 ${m.content}` : `🤖 ${m.content}`
             )
           );
@@ -49,8 +57,8 @@ export default function Home() {
         body: formData
       });
 
-      const data = await res.json();
-      if (res.ok) {
+      const data: { url?: string } = await res.json();
+      if (res.ok && data.url) {
         setMessages((prev) => [
           ...prev,
           `📷 <img src="${data.url}" alt="Image uploadée" class="max-w-full rounded-lg mt-2" />`
@@ -80,22 +88,23 @@ export default function Home() {
         body: JSON.stringify({ userId: USER_ID, message: promptToSend }),
       });
 
-      const data = await response.json();
+      const data: { reply?: string } = await response.json();
       if (response.ok && data.reply) {
         setMessages((prev) => [...prev, '🤖 ']);
 
+        // ✅ éviter le non-null assertion `!`
+        const replyText = data.reply;
         let i = 0;
         const interval = setInterval(() => {
           setMessages((prev) => {
-            const last = prev[prev.length - 1];
             const updated = prev.slice(0, -1);
-            return [...updated, '🤖 ' + data.reply.slice(0, i)];
+            return [...updated, '🤖 ' + replyText.slice(0, i)];
           });
           i++;
-          if (i > data.reply.length) clearInterval(interval);
+          if (i > replyText.length) clearInterval(interval);
         }, 30);
 
-        speak(data.reply);
+        speak(replyText);
       } else {
         setMessages((prev) => [...prev, '❌ Réponse invalide']);
       }
@@ -136,7 +145,7 @@ export default function Home() {
 
       setRecording(true);
 
-      mediaRecorder.ondataavailable = (event) => {
+      mediaRecorder.ondataavailable = (event: DataAvailableEvent) => {
         audioChunks.push(event.data);
       };
 
@@ -158,7 +167,7 @@ export default function Home() {
             body: formData,
           });
 
-          const data = await res.json();
+          const data: { text?: string } = await res.json();
           if (data.text) {
             await handleSubmit(data.text);
           } else {
@@ -201,7 +210,7 @@ export default function Home() {
 
       <section className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         <div className="flex flex-col justify-end gap-4 max-w-4xl mx-auto min-h-full">
-          {messages.map((msg, i) => (
+          {messages.map((msg: string, i: number) => (
             <div
               key={i}
               className="w-full bg-[#1E293B] text-[#F8FAFC] p-4 rounded-md break-words space-y-2"

@@ -11,7 +11,10 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const userId = (formData.get("userId") as string) || "unknown_user";
-    if (!file) return NextResponse.json({ error: "File missing" }, { status: 400 });
+
+    if (!file) {
+      return NextResponse.json({ error: "File missing" }, { status: 400 });
+    }
 
     const ext = (file.name?.split(".").pop() || "jpg").toLowerCase();
     const filePath = `${userId}/${Date.now()}.${ext}`;
@@ -22,7 +25,10 @@ export async function POST(req: Request) {
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
       .upload(filePath, file, { contentType: file.type || "application/octet-stream", upsert: false });
-    if (uploadError) return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+
+    if (uploadError) {
+      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    }
 
     // Enregistrer le média en base (table public.media)
     await supabase
@@ -40,13 +46,16 @@ export async function POST(req: Request) {
       .from(BUCKET)
       .createSignedUrl(filePath, 60 * 60);
 
-    if (signError) {
+    if (signError || !signed) {
       // on renvoie au moins le chemin si la signature échoue
       return NextResponse.json({ path: filePath }, { status: 200 });
     }
 
     return NextResponse.json({ url: signed.signedUrl, path: filePath });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
+  } catch (e) {
+    if (e instanceof Error) {
+      return NextResponse.json({ error: e.message }, { status: 500 });
+    }
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

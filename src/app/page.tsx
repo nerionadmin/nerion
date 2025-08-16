@@ -15,6 +15,13 @@ type DataAvailableEvent = { data: Blob };
 // ➕ Helper pour retirer le gras Markdown (**…**)
 const stripMdEmphasis = (s: string) => s.replace(/\*\*(.*?)\*\*/g, '$1');
 
+// ✅ Typage propre pour webkitAudioContext
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<string[]>([]);
   const [input, setInput] = useState('');
@@ -224,10 +231,16 @@ export default function Home() {
     if (!text || !text.trim()) return;
 
     try {
-      if (!audioUnlocked) unlockAudioContext();
+      if (!audioUnlocked) {
+        unlockAudioContext();
+      }
 
       if (currentAudioRef.current) {
-        try { currentAudioRef.current.pause(); } catch {}
+        try {
+          currentAudioRef.current.pause();
+        } catch {
+          // ignore
+        }
         currentAudioRef.current.src = '';
         currentAudioRef.current = null;
       }
@@ -265,6 +278,7 @@ export default function Home() {
       };
 
       await audio.play().catch((e) => {
+        // Si le navigateur bloque la lecture auto, l’utilisateur devra recliquer le bouton HP
         console.error('Lecture audio bloquée/erreur:', e);
       });
     } catch (err) {
@@ -276,8 +290,12 @@ export default function Home() {
   // 🔇 Coupe le micro + libère les ressources (stream, AudioContext, RAF)
   const stopRecordingAndCleanup = async () => {
     try {
-      mediaRecorderRef.current?.state === 'recording' && mediaRecorderRef.current.stop();
-    } catch {}
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {
+      // ignore
+    }
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -292,7 +310,9 @@ export default function Home() {
     if (audioCtxRef.current) {
       try {
         await audioCtxRef.current.close();
-      } catch {}
+      } catch {
+        // ignore
+      }
       audioCtxRef.current = null;
     }
 
@@ -334,7 +354,7 @@ export default function Home() {
             body: formData,
           });
 
-          const data: { text?: string } = await res.json();
+        const data: { text?: string } = await res.json();
           if (data.text && data.text.trim()) {
             await handleSubmit(data.text.trim());
           } else {
@@ -363,7 +383,17 @@ export default function Home() {
     const SILENCE_HOLD_MS = 600;
     const VOICE_THRESHOLD = 0.02;
 
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContextCtor =
+      typeof window !== 'undefined'
+        ? window.AudioContext || window.webkitAudioContext
+        : undefined;
+
+    if (!AudioContextCtor) {
+      console.error('AudioContext non supporté.');
+      return;
+    }
+
+    const audioCtx = new AudioContextCtor();
     audioCtxRef.current = audioCtx;
 
     const source = audioCtx.createMediaStreamSource(stream);
@@ -398,7 +428,9 @@ export default function Home() {
         lastVoiceTsRef.current = now;
       } else {
         if (userIsSpeakingRef.current && now - lastVoiceTsRef.current > SILENCE_HOLD_MS) {
-          mediaRecorderRef.current?.state === 'recording' && mediaRecorderRef.current.stop();
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+          }
           return;
         }
       }
@@ -417,7 +449,9 @@ export default function Home() {
     if (audioCtxRef.current) {
       try {
         await audioCtxRef.current.close();
-      } catch {}
+      } catch {
+        // ignore
+      }
       audioCtxRef.current = null;
     }
     analyserRef.current = null;

@@ -1,3 +1,4 @@
+// src/app/api/ask/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -17,11 +18,19 @@ type MemoryItem = {
   importance?: number;
 };
 
+// Typages locaux pour le contenu multimodal (texte + image)
+type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export async function POST(req: Request) {
   try {
     // ⬇️ Support facultatif d'image (inchangé côté types)
-    const { userId, message, imageUrl }: { userId?: string; message?: string; imageUrl?: string } =
-      await req.json();
+    const {
+      userId,
+      message,
+      imageUrl,
+    }: { userId?: string; message?: string; imageUrl?: string } = await req.json();
 
     // ⬇️ ✅ Autoriser image seule (message facultatif si imageUrl présent)
     if (!userId || (!message && !imageUrl)) {
@@ -44,6 +53,18 @@ export async function POST(req: Request) {
     let visionNoteForReply = "";
     if (imageUrl && typeof imageUrl === "string" && imageUrl.trim().length > 0) {
       try {
+        const userContent: ChatContentPart[] = [
+          {
+            type: "text",
+            text:
+              "Analyse cette image pour extraire une description courte et utile de l'apparence (physique, style, énergie dégagée). Pas de données sensibles, pas de spéculations. 3–5 points maximum.",
+          },
+          {
+            type: "image_url",
+            image_url: { url: imageUrl },
+          },
+        ];
+
         const vision = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           temperature: 0.2,
@@ -55,23 +76,12 @@ export async function POST(req: Request) {
             },
             {
               role: "user",
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Analyse cette image pour extraire une description courte et utile de l'apparence (physique, style, énergie dégagée). Pas de données sensibles, pas de spéculations. 3–5 points maximum.",
-                },
-                {
-                  type: "image_url",
-                  image_url: { url: imageUrl },
-                } as any,
-              ] as any,
+              content: userContent,
             },
           ],
         });
 
-        const visionNote =
-          vision.choices?.[0]?.message?.content?.trim().slice(0, 1000) || "";
+        const visionNote = vision.choices?.[0]?.message?.content?.trim().slice(0, 1000) || "";
 
         // ➜ on garde pour répondre tout de suite
         visionNoteForReply = visionNote;
@@ -98,9 +108,7 @@ export async function POST(req: Request) {
       .order("created_at", { ascending: false })
       .limit(12);
 
-    const history: MessageRecord[] = Array.isArray(recent)
-      ? (recent as MessageRecord[])
-      : [];
+    const history: MessageRecord[] = Array.isArray(recent) ? (recent as MessageRecord[]) : [];
 
     // 2bis) Récupérer les dernières descriptions d'apparence (mémoire 'physique')
     const { data: phys } = await db
@@ -111,10 +119,8 @@ export async function POST(req: Request) {
       .order("created_at", { ascending: false })
       .limit(3);
 
-    const appearanceCtx =
-      Array.isArray(phys) && phys.length > 0
-        ? phys.map((m: any) => `- ${m.content}`).join("\n")
-        : "";
+    const physRows: { content: string }[] = Array.isArray(phys) ? (phys as { content: string }[]) : [];
+    const appearanceCtx = physRows.length > 0 ? physRows.map((m) => `- ${m.content}`).join("\n") : "";
 
     // 3) Demander une réponse à Nerion
     const now = new Date().toLocaleString("fr-FR", {
@@ -188,8 +194,7 @@ Et c’est le début d’une nouvelle ère."
           ? [
               {
                 role: "system" as const,
-                content:
-                  `Contexte d'apparence utilisateur (à utiliser si pertinent pour répondre) :\n${appearanceCtx}`,
+                content: `Contexte d'apparence utilisateur (à utiliser si pertinent pour répondre) :\n${appearanceCtx}`,
               },
             ]
           : []),
@@ -221,10 +226,10 @@ Et c’est le début d’une nouvelle ère."
 
     let items: MemoryItem[] = [];
     try {
-      const parsed = JSON.parse(
-        extraction.choices[0].message?.content || "{}"
-      );
-      items = Array.isArray(parsed.items) ? (parsed.items as MemoryItem[]) : [];
+      const parsed = JSON.parse(extraction.choices[0].message?.content || "{}");
+      items = Array.isArray((parsed as { items?: unknown }).items)
+        ? ((parsed as { items: MemoryItem[] }).items as MemoryItem[])
+        : [];
     } catch {
       // parsing échoué, on laisse items vide
     }
@@ -246,9 +251,7 @@ Et c’est le début d’une nouvelle ère."
     }
 
     // ⬇️ NEW: si une analyse d’image existe, renvoyer UNIQUEMENT l’analyse (avec un titre), sans texte d’attente
-    const finalReply = visionNoteForReply
-      ? `Analyse de ton image…\n\n${visionNoteForReply}`
-      : reply;
+    const finalReply = visionNoteForReply ? `Analyse de ton image…\n\n${visionNoteForReply}` : reply;
 
     // 5) Sauvegarder la réponse
     await db.from("messages").insert({

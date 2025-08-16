@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 
 export async function POST(req: Request) {
   try {
-    const { text } = await req.json();
+    const body: unknown = await req.json();
+    const { text } = body as { text?: string };
 
     // ✅ Validation robuste
     if (!text || typeof text !== 'string' || !text.trim()) {
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'audio/mpeg',          // ✅ s'assure qu'on reçoit bien du MP3
+          Accept: 'audio/mpeg', // ✅ s'assure qu'on reçoit bien du MP3
           'xi-api-key': apiKey,
         },
         body: JSON.stringify({
@@ -64,12 +65,21 @@ export async function POST(req: Request) {
         'Cache-Control': 'no-store',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // ✅ Gestion claire d'un éventuel timeout
-    if (error?.name === 'AbortError') {
+    if (isAbortError(error)) {
       return NextResponse.json({ error: 'Timeout API ElevenLabs' }, { status: 504 });
     }
     console.error('Erreur ElevenLabs :', error);
     return NextResponse.json({ error: 'Erreur serveur ElevenLabs' }, { status: 500 });
   }
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name?: string }).name === 'AbortError'
+  );
 }

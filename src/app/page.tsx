@@ -597,7 +597,7 @@ export default function Home() {
               </p>
               <button
                 onClick={handleGoogleLogin}
-                className="w-full h-12 rounded-lg bg-white/10 hover:bg白/15 border border-[#334155] transition font-medium"
+                className="w-full h-12 rounded-lg bg-white/10 hover:bg-white/15 border border-[#334155] transition font-medium"
               >
                 Se connecter avec Google
               </button>

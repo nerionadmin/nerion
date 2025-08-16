@@ -4,7 +4,8 @@ export async function POST(req: Request) {
   try {
     const { text } = await req.json();
 
-    if (!text || typeof text !== 'string') {
+    // ✅ Validation robuste
+    if (!text || typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'Texte manquant.' }, { status: 400 });
     }
 
@@ -15,25 +16,43 @@ export async function POST(req: Request) {
 
     const voiceId = 'EXAVITQu4vr4xnSDxMaL'; // Rachel par défaut
 
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'xi-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.8,
+    // ✅ Timeout pour éviter les requêtes qui pendent
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000); // 20s
+    let response: Response;
+
+    try {
+      response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',          // ✅ s'assure qu'on reçoit bien du MP3
+          'xi-api-key': apiKey,
         },
-      }),
-    });
+        body: JSON.stringify({
+          text: text.trim(),
+          model_id: 'eleven_multilingual_v2',
+          // ✅ Format plus léger pour accélérer l’arrivée des premiers octets
+          output_format: 'mp3_22050_32',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.8,
+            // use_speaker_boost: true, // optionnel
+          },
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
-      const error = await response.text();
-      return NextResponse.json({ error }, { status: response.status });
+      const detail = await response.text().catch(() => '');
+      console.error('Erreur ElevenLabs upstream:', response.status, detail);
+      return NextResponse.json(
+        { error: 'Erreur API ElevenLabs', status: response.status, detail },
+        { status: response.status }
+      );
     }
 
     const audioBuffer = await response.arrayBuffer();
@@ -45,7 +64,11 @@ export async function POST(req: Request) {
         'Cache-Control': 'no-store',
       },
     });
-  } catch (error) {
+  } catch (error: any) {
+    // ✅ Gestion claire d'un éventuel timeout
+    if (error?.name === 'AbortError') {
+      return NextResponse.json({ error: 'Timeout API ElevenLabs' }, { status: 504 });
+    }
     console.error('Erreur ElevenLabs :', error);
     return NextResponse.json({ error: 'Erreur serveur ElevenLabs' }, { status: 500 });
   }

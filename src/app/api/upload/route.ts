@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,         // depuis .env.local
-  process.env.SUPABASE_SERVICE_ROLE! // service_role (secret)
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // service_role (secret)
 );
 
 export async function POST(req: Request) {

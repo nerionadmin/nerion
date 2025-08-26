@@ -4,11 +4,6 @@ import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
-type ChatMessage = {
-  role: 'user' | 'assistant';
-  content: string;
-};
-
 // Petit type local pour l'événement de MediaRecorder
 type DataAvailableEvent = { data: Blob };
 
@@ -53,6 +48,24 @@ export default function Home() {
 
   // ⛔️ Gate d’auth
   const supabase = createClientComponentClient();
+  // ⬇️ Échange ?code=... -> session (cookies sb-...) — version corrigée
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  if (!code) return;
+
+  supabase.auth.exchangeCodeForSession(code)
+    .then(() => {
+      // on nettoie l’URL (retire code/state pour éviter de relancer l’échange)
+      url.searchParams.delete("code");
+      url.searchParams.delete("state");
+      window.history.replaceState({}, "", url.toString());
+    })
+    .catch(() => {});
+}, [supabase]);
+  // ⬆️ AJOUT UNIQUE
+
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
   useEffect(() => {
     let mounted = true;
@@ -69,44 +82,87 @@ export default function Home() {
     };
   }, [supabase]);
 
+  // 🔽🔽🔽 UNIQUE MODIF ICI : handler du bouton Google (ajout queryParams)
   const handleGoogleLogin = async () => {
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : undefined;
+
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined },
+      options: {
+        redirectTo: origin,
+        queryParams: {
+          prompt: 'consent',
+          access_type: 'offline',
+        },
+      },
     });
   };
+  // 🔼🔼🔼 UNIQUE MODIF ICI
 
-  // ✅ LOGOUT TOUJOURS DISPONIBLE – couleurs Néryon only
-  const handleLogout = async () => {
+ // ✅ Logout : coupe audio + vide l'UI + purge la session locale
+const handleLogout = async () => {
+  try {
+    await stopRecordingAndCleanup(); // coupe micro/lectures si besoin
+    await supabase.auth.signOut();
+    sessionStorage.removeItem("chatMessages"); // supprime l'historique persistant côté navigateur
+    setMessages([]);                            // vide l'affichage du chat
+    setIsAuthed(false);
+  } catch (e) {
+    console.error('Erreur logout:', e);
+  }
+};
+
+ // 📌 Charger l'historique *après* auth (mais NE PAS écraser s'il y a un cache)
+useEffect(() => {
+  let cancelled = false;
+
+  const load = async () => {
     try {
-      await stopRecordingAndCleanup(); // coupe micro/lectures si besoin
-      await supabase.auth.signOut();
-      setIsAuthed(false);
-      setMessages((prev) => [...prev, '🔒 Déconnecté.']);
-    } catch (e) {
-      console.error('Erreur logout:', e);
+      // 1) si on a un cache local, on le garde et on skip le fetch serveur
+      const cached = sessionStorage.getItem("chatMessages");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          setMessages(parsed);
+          return; // ⛔ on n'écrase pas avec le serveur
+        }
+      }
+
+      // 2) sinon, on va chercher côté serveur
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+
+      const res = await fetch('/api/history', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data: { messages?: { role: 'user' | 'assistant'; content: string }[] } = await res.json();
+
+      if (!cancelled && res.ok && Array.isArray(data.messages)) {
+        setMessages(
+          data.messages.map((m) => (m.role === 'user' ? `🧠 ${m.content}` : `🤖 ${m.content}`))
+        );
+      }
+    } catch (err) {
+      if (!cancelled) console.error('Erreur chargement historique', err);
     }
   };
 
-  // 📌 Charger l'historique au montage
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const res = await fetch(`/api/history?userId=${USER_ID}`);
-        const data: { messages?: ChatMessage[] } = await res.json();
-        if (res.ok && Array.isArray(data.messages)) {
-          setMessages(
-            data.messages.map((m: ChatMessage) =>
-              m.role === 'user' ? `🧠 ${m.content}` : `🤖 ${m.content}`
-            )
-          );
-        }
-      } catch (err) {
-        console.error('Erreur chargement historique', err);
-      }
-    };
-    fetchHistory();
-  }, []);
+  load();
+
+  const { data: sub } = supabase.auth.onAuthStateChange((_e, _session) => {
+    load();
+  });
+
+  return () => {
+    cancelled = true;
+    sub.subscription.unsubscribe();
+  };
+}, [supabase]);
 
   // 📌 Upload image → on envoie aussi imageUrl à /api/ask (modif unique)
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -137,15 +193,23 @@ export default function Home() {
         // 🔥 Déclencher l'analyse côté /api/ask avec imageUrl
         setLoading(true);
         try {
+          // ********** CORRECTION: envoi du Bearer token, plus de userId dans le body **********
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+
           const askRes = await fetch('/api/ask', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: JSON.stringify({
-              userId: USER_ID,
+              // userId retiré côté client : l’API lit l’utilisateur via le token
               message: '',
               imageUrl: data.url,
             }),
           });
+          // *************************************************************************************
 
           const askData: { reply?: string } = await askRes.json();
 
@@ -192,32 +256,40 @@ export default function Home() {
     setLoading(true);
 
     try {
+      // ********** CORRECTION: envoi du Bearer token, plus de userId dans le body **********
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const response = await fetch('/api/ask', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: USER_ID, message: promptToSend }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message: promptToSend }),
       });
+      // *************************************************************************************
 
-      const data: { reply?: string } = await response.json();
-      if (response.ok && data.reply) {
-        setMessages((prev) => [...prev, '🤖 ']);
+      const data: { message?: string } = await response.json();
+if (response.ok && data.message) {
+  setMessages((prev) => [...prev, '🤖 ']);
 
-        const replyText = stripMdEmphasis(data.reply);
-        let i = 0;
-        const interval = setInterval(() => {
-          setMessages((prev) => {
-            const updated = prev.slice(0, -1);
-            return [...updated, '🤖 ' + replyText.slice(0, i)];
-          });
-          i++;
-          if (i > replyText.length) clearInterval(interval);
-        }, 30);
+  const replyText = stripMdEmphasis(data.message);
+  let i = 0;
+  const interval = setInterval(() => {
+    setMessages((prev) => {
+      const updated = prev.slice(0, -1);
+      return [...updated, '🤖 ' + replyText.slice(0, i)];
+    });
+    i++;
+    if (i > replyText.length) clearInterval(interval);
+  }, 30);
 
-        await stopRecordingAndCleanup();
-        speak(replyText);
-      } else {
-        setMessages((prev) => [...prev, '❌ Réponse invalide']);
-      }
+  await stopRecordingAndCleanup();
+  speak(replyText);
+} else {
+  setMessages((prev) => [...prev, '❌ Réponse invalide']);
+}
     } catch (error: unknown) {
       console.error(error);
       setMessages((prev) => [...prev, '⚠️ Une erreur est survenue']);
@@ -354,7 +426,7 @@ export default function Home() {
             body: formData,
           });
 
-        const data: { text?: string } = await res.json();
+          const data: { text?: string } = await res.json();
           if (data.text && data.text.trim()) {
             await handleSubmit(data.text.trim());
           } else {
@@ -474,9 +546,28 @@ export default function Home() {
     setAudioUnlocked(true);
   };
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+ // ♻️ Au montage : si un cache existe, on réhydrate l'UI
+useEffect(() => {
+  try {
+    const saved = sessionStorage.getItem("chatMessages");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) setMessages(parsed);
+    }
+  } catch (e) {
+    console.error("Erreur lecture sessionStorage:", e);
+  }
+}, []);
+
+// 💾 À chaque update : on sauvegarde en session + on scrolle en bas
+useEffect(() => {
+  try {
+    sessionStorage.setItem("chatMessages", JSON.stringify(messages));
+  } catch (e) {
+    console.error("Erreur écriture sessionStorage:", e);
+  }
+  bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+}, [messages]);
 
   const VoiceMeter = ({ level, active }: { level: number; active: boolean }) => {
     if (!active) return null;
@@ -631,7 +722,7 @@ export default function Home() {
               </p>
               <button
                 onClick={handleGoogleLogin}
-                className="w-full h-12 rounded-lg bg-white/10 hover:bg-white/15 border border-[#334155] transition font-medium"
+                className="w-full h-12 rounded-lg bg-white/10 hover:bg.white/15 border border-[#334155] transition font-medium"
               >
                 Se connecter avec Google
               </button>

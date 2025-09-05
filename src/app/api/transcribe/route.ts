@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import openai from '@/lib/openai';
 
-export const runtime = 'nodejs';       // ✅ obligatoire pour Buffer
-export const maxDuration = 30;         // limite exécution (facultatif)
+export const runtime = 'nodejs';       // ✅ nécessaire pour Buffer
+export const maxDuration = 30;         // limite d’exécution (optionnel)
 
 // Limite prudente pour Whisper (≈25MB)
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -23,20 +23,22 @@ function extFromMime(mime: string): string {
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const audioFile = formData.get('audio');
+    const entry = formData.get('audio');
 
-    if (!audioFile || !(audioFile instanceof Blob)) {
+    // ✅ Narrowing fort: on exige un Blob/File
+    if (!(entry instanceof Blob)) {
       return NextResponse.json(
         { error: 'Fichier audio manquant ou invalide.' },
         { status: 400 }
       );
     }
 
-    const mime = (audioFile as any).type || 'application/octet-stream';
+    const audioFile = entry; // Blob typé
+    const mime = audioFile.type || 'application/octet-stream';
     const ext = extFromMime(mime);
 
     // ⚠️ contrôle de taille
-    const size = (audioFile as Blob).size;
+    const size = audioFile.size;
     if (size > MAX_BYTES) {
       return NextResponse.json(
         { error: `Fichier trop volumineux (${(size / 1024 / 1024).toFixed(1)}MB). Max ≈ 25MB.` },
@@ -52,17 +54,26 @@ export async function POST(req: Request) {
       file,
       model: 'whisper-1',
       response_format: 'json',
-      language: 'fr', // ⬅️ laisse FR forcé, commente si tu veux auto-détection
+      language: 'fr', // ⬅️ laisse FR forcé; commente pour auto-détection
     });
 
     return NextResponse.json({ text: transcript.text ?? '' });
-  } catch (err: any) {
-    console.error('Erreur transcription :', err);
+  } catch (err: unknown) {
+    // ✅ Pas de any : on typage-narrow l’erreur
+    const e = err as {
+      response?: { data?: { error?: { message?: string } }; status?: number };
+      message?: string;
+      status?: number;
+    };
+
+    console.error('Erreur transcription :', e);
+
     const msg =
-      err?.response?.data?.error?.message ||
-      err?.message ||
+      e?.response?.data?.error?.message ||
+      e?.message ||
       'Erreur de transcription';
-    const status = Number(err?.status) || Number(err?.response?.status) || 500;
+
+    const status = Number(e?.status) || Number(e?.response?.status) || 500;
     return NextResponse.json({ error: msg }, { status });
   }
 }

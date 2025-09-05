@@ -1,13 +1,5 @@
 // src/app/api/ask/route.ts
 // Nerion ASK Route — v3.3 (full-memory always; robust stimulus mapping & scoring)
-// - Full short-memory context (Supabase already caps to ~20 latest rows) for Q1 → Q120
-// - Oldest→Newest chronology for GPT (conversation flow stays natural)
-// - Stimulus→index mapping by exact text to prevent drift
-// - Score extraction takes the *last* token ([[SCORE=X]] or {"score": X})
-// - No silent overwrite if a qN is already set; set is_complete on q120
-// - [AUTO_CONTINUE] respected via system prompt INPUT_MARKERS
-// - Image inputs described via analyzeImage() and appended to user content
-// - dynamic = force-dynamic to avoid caching surprises
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +17,22 @@ type ImagePart = { type: "image_url"; image_url: { url: string } };
 type TextPart = { type: "text"; text: string };
 type ChatContentPart = ImagePart | TextPart;
 type Msg = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+type QKey = `q${number}`;
+type BigFiveRow = {
+  user_id: string;
+  is_complete?: boolean;
+  [key: `q${number}`]: number | null | undefined;
+};
+
+type MemoriesContentOnly = { content: string };
+type MemoryRow = { role: string; content: string; created_at: string };
+
+interface AskBody {
+  message?: string;
+  assistant_message?: string;
+  content?: ChatContentPart[];
+}
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -45,7 +53,7 @@ function hasTriggerOrchestrator(s: string | undefined): boolean {
 function stripTechnicalBlocks(text: string): string {
   return (text ?? "")
     .replace(/```json[\s\S]*?```/g, "")
-    .replace(/```[\s\S]*?```/g, "") // drop any fenced blob
+    .replace(/```[\s\S]*?```/g, "")
     .replace(/\{\s*"trigger_orchestrator"\s*:\s*true\s*\}/g, "")
     .replace(/\{\s*"score"\s*:\s*[1-5]\s*\}/gi, "")
     .replace(/\[\[\s*SCORE\s*=\s*[1-5]\s*\]\]/gi, "")
@@ -100,11 +108,14 @@ async function getBigFiveRow(supabase: SupabaseClient, userId: string) {
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
-  return (data as any) || null;
+  return (data as unknown as BigFiveRow) ?? null;
 }
 
-function findCurrentIndex(row: any): number {
-  for (let i = 1; i <= 120; i++) if (row?.[`q${i}`] == null) return i;
+function findCurrentIndex(row: BigFiveRow): number {
+  for (let i = 1; i <= 120; i++) {
+    const key = `q${i}` as QKey;
+    if (row?.[key] == null) return i;
+  }
   return 121; // tout rempli
 }
 
@@ -123,7 +134,7 @@ async function getLastStimulus(
     .order("created_at", { ascending: false })
     .limit(1);
   if (error || !data || data.length === 0) return null;
-  const raw = (data[0] as any).content as string;
+  const raw = (data[0] as unknown as MemoriesContentOnly).content;
   const stim = raw.replace(/^\[STIMULUS\]\s*\n?/, "").trim();
   return stim || null;
 }
@@ -135,7 +146,7 @@ function findIndexByStimulus(stimulus: string): number | null {
   return match?.index ?? null;
 }
 
-// Full short-history (oldest → newest). No explicit cap here; Supabase enforces your table policy.
+// Full short-history (oldest → newest).
 async function getShortHistoryBounded(
   supabase: SupabaseClient,
   userId: string
@@ -147,7 +158,7 @@ async function getShortHistoryBounded(
     .eq("layer", "short")
     .order("created_at", { ascending: true });
   if (error || !data) return [];
-  return (data as any[]).map((m) => ({
+  return (data as unknown as MemoryRow[]).map((m) => ({
     role: m.role === "user" ? "user" : "assistant",
     content: m.content,
   }));
@@ -179,27 +190,44 @@ export async function POST(req: Request) {
     const isComplete = bfRowAtStart?.is_complete === true;
 
     // ---- Parse body ----
-    const body = await req.json();
-    const rawMessage: string | undefined = typeof body.message === "string" ? body.message.trim() : undefined;
+    const rawBody = (await req.json()) as unknown;
+    const body = rawBody as AskBody;
+
+    const rawMessage: string | undefined =
+      typeof body.message === "string" ? body.message.trim() : undefined;
+
     const assistantMessageFromClient: string | undefined =
-      typeof body.assistant_message === "string" ? body.assistant_message.trim() : undefined;
-    const rawContent: ChatContentPart[] | undefined = Array.isArray(body.content) ? body.content : undefined;
+      typeof body.assistant_message === "string"
+        ? body.assistant_message.trim()
+        : undefined;
+
+    const rawContent: ChatContentPart[] | undefined = Array.isArray(body.content)
+      ? body.content
+      : undefined;
 
     // Compose user input (texte + image décrite)
     let composedUserInput = "";
-    const hasImage = !!rawContent?.some((p) => p.type === "image_url" && (p as ImagePart).image_url?.url);
-    const firstImageUrl = rawContent?.find((p): p is ImagePart => p.type === "image_url")?.image_url?.url;
+    const hasImage = !!rawContent?.some(
+      (p) => p.type === "image_url" && (p as ImagePart).image_url?.url
+    );
+    const firstImageUrl = rawContent?.find(
+      (p): p is ImagePart => p.type === "image_url"
+    )?.image_url?.url;
 
     if (hasImage && firstImageUrl) {
       console.log("🖼️ Image détectée, analyse...");
       const description = await analyzeImage(firstImageUrl);
-      composedUserInput = rawMessage ? `${rawMessage}\n\n[Image décrite]\n${description}` : description;
+      composedUserInput = rawMessage
+        ? `${rawMessage}\n\n[Image décrite]\n${description}`
+        : description;
     } else {
-      composedUserInput = rawMessage ?? (rawContent as TextPart[])?.map((p) => p.text).join("\n") ?? "";
+      composedUserInput =
+        rawMessage ?? (rawContent as TextPart[])?.map((p) => p.text).join("\n") ?? "";
     }
 
     console.log("💬 Input user:", composedUserInput || "(vide)");
-    if (assistantMessageFromClient) console.log("🤝 assistant_message (client):", assistantMessageFromClient);
+    if (assistantMessageFromClient)
+      console.log("🤝 assistant_message (client):", assistantMessageFromClient);
 
     // ---- Stocker le message user si présent ----
     if (composedUserInput) await storeInShort(supabase, userId, "user", composedUserInput);
@@ -243,7 +271,8 @@ export async function POST(req: Request) {
       const firstQ = await callOpenAI(messages, undefined, 0.2, 320);
       await storeInShort(supabase, userId, "assistant", stripTechnicalBlocks(firstQ) || firstQ);
 
-      const out = (enthusiasm ? enthusiasm + "\n\n" : "") + (stripTechnicalBlocks(firstQ) || firstQ);
+      const out =
+        (enthusiasm ? enthusiasm + "\n\n" : "") + (stripTechnicalBlocks(firstQ) || firstQ);
       return NextResponse.json({ message: out });
     }
 
@@ -325,7 +354,7 @@ export async function POST(req: Request) {
       const col = qMeta.key;
       const finalScore = qMeta.isReversed ? 6 - score : score;
 
-      if (row[col] != null) {
+      if (row[col as keyof BigFiveRow] != null) {
         console.warn(`⚠️ ${col} already set — skipping overwrite`);
       } else {
         console.log(`📝 Écriture ${col} = ${finalScore} (isReversed=${qMeta.isReversed})`);
@@ -416,8 +445,18 @@ export async function POST(req: Request) {
     const cleaned = stripTechnicalBlocks(reply);
     await storeInShort(supabase, userId, "assistant", cleaned || reply);
     return NextResponse.json({ message: cleaned || reply });
-  } catch (err) {
-    console.error("❌ Error in ask route:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  } catch (err: unknown) {
+    const e = err as {
+      response?: { data?: { error?: { message?: string } }; status?: number };
+      message?: string;
+      status?: number;
+    };
+    console.error("❌ Error in ask route:", e);
+    const msg =
+      e?.response?.data?.error?.message ||
+      e?.message ||
+      "Server error";
+    const status = Number(e?.status) || Number(e?.response?.status) || 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }

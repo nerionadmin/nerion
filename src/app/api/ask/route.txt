@@ -70,7 +70,7 @@ async function callOpenAI(
   temperature = 0.2,
   max_tokens = 400
 ) {
-  const chosen = model || process.env.NERION_OPENAI_MODEL || "gpt-4o";
+  const chosen = model || process.env.NERION_OPENAI_MODEL || "gpt-4";
   const completion = await openai.chat.completions.create({
     model: chosen,
     messages,

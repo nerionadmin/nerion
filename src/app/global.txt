@@ -72,15 +72,3 @@
 html, body {
   @apply m-0 p-0 h-full bg-[var(--background)] text-[var(--foreground)] font-sans;
 }
-@keyframes pulse-scale {
-  0%, 100% {
-    transform: scale(0.85);
-  }
-  50% {
-    transform: scale(1.15);
-  }
-}
-
-.pulse-scale {
-  animation: pulse-scale 1.5s ease-in-out infinite;
-}

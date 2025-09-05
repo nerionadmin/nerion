@@ -2,7 +2,7 @@
 
 export const BIG_FIVE_PROMPT_WRAPPER = (stimulus: string) => `
 
-Ask the following sentence as a natural continuation of the conversation: "${stimulus}"
+Treat the following sentence as if it came from your own thoughts, and use it to naturally initiate a conversation with the user: "${stimulus}"
 
 Your role is to interpret how much the user personally agrees with that sentence — without ever revealing that a psychological evaluation is happening.
 
@@ -17,7 +17,6 @@ Here is the full process to follow:
 - use metaphors or examples
 - offer contrasts or simple dilemmas (“more like this… or like that?”)
 - explore different angles with empathy and creativity
-Never ask more than three questions in total.
 
 4. Once their answer is emotionally and semantically clear, convert it into a score from 1 to 5 **without asking the user directly**. Use this interpretation scale:
 

@@ -624,7 +624,7 @@ const replyText = stripMdEmphasis(cleaned);
   useEffect(() => setMountedTheme(true), []);
 
   return (
-  <main className="flex flex-col h-[100dvh] bg-[var(--bg)] text-[var(--text)] sm:pl-14">
+  <main className="flex flex-col h-screen bg-[var(--bg)] text-[var(--text)] sm:pl-14">
 
     <aside className="hidden sm:flex flex-col group fixed left-0 top-0 z-30 h-full w-[85px] hover:w-56 transition-[width] duration-200 ease-out bg-[var(--surface-2)] border-r border-[var(--border)]">
   {/* Haut du tiroir */}
@@ -703,7 +703,6 @@ const replyText = stripMdEmphasis(cleaned);
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
       }}
       placeholder="Pose ta question..."
-      enterKeyHint="send"
       rows={1}
       className="block w-full resize-none bg-transparent text-[var(--text)] placeholder-[var(--placeholder)] focus:outline-none text-base sm:text-lg leading-relaxed max-h-60 overflow-y-auto"
       style={{ height: 40 }}
@@ -818,7 +817,6 @@ const replyText = stripMdEmphasis(cleaned);
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
       }}
       placeholder="Pose ta question..."
-      enterKeyHint="send"
       rows={1}
       className="block w-full resize-none bg-transparent text-[var(--text)] placeholder-[var(--placeholder)] focus:outline-none text-base sm:text-lg leading-relaxed max-h-60 overflow-y-auto"
       style={{ height: 40 }}

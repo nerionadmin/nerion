@@ -1,0 +1,364 @@
+// src/app/api/ask/route.ts
+// Nerion ASK Route — v3 (short-memory only)
+// - Intro/confirmation → Q1 immédiate
+// - Big Five: scoring auto + enchaînement Qn+1
+// - Q120: is_complete=true + message final codé en dur
+// - Logs détaillés pour débogage
+
+export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import OpenAI from "openai";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { buildSystemPrompt } from "../../../lib/prompts/system";
+import { storeInShort } from "../../../lib/memory";
+import { getBigFiveQuestion } from "../../../lib/prompts/big_five";
+import { analyzeImage } from "../../../lib/photo";
+
+// ------------ Types ------------
+type ImagePart = { type: "image_url"; image_url: { url: string } };
+type TextPart = { type: "text"; text: string };
+type ChatContentPart = ImagePart | TextPart;
+type Msg = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+// ------------ Helpers ------------
+// ---- Language helpers (universal, non-intrusive) ----
+async function detectLanguageFromMemory(supabase: SupabaseClient, userId: string): Promise<string> {
+  try {
+    // Use existing short-memory chat to estimate dominant language (user + assistant)
+    const history = await getRecentShortMemoriesAsChat(supabase, userId, 12);
+    const fullText = history
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n")
+      .slice(0, 3000);
+    const sysPrompt =
+      'You are a language detector. Respond only with the ISO 639-1 language code (e.g., en, fr, es, de, ar, zh). Do not add anything else.';
+    const messages: Msg[] = [
+      { role: "system", content: sysPrompt },
+      { role: "user", content: fullText || "..." },
+    ];
+    // Use gpt-4o for speed/cost; pure classification
+    const result = await callOpenAI(messages, "gpt-4o", 0.0);
+    const lang = (result || "").trim().toLowerCase().slice(0, 5);
+    return /^[a-z]{2}$/.test(lang) ? lang : "en";
+  } catch (e) {
+    console.warn("Language detection failed, defaulting to 'en'.", e);
+    return "en";
+  }
+}
+
+/**
+ * Prepends a minimal language policy to the system prompt without altering
+ * the original logic (scoring, formatting) defined in buildSystemPrompt.
+ * This keeps the existing system.ts contract intact.
+ */
+function localizeSystem(baseSystemPrompt: string, lang: string): string {
+  const lc = (lang || "en").toLowerCase().slice(0, 5);
+  return `All assistant messages visible to the user MUST be written in language code "${lc}" (ISO 639-1). If the stimulus or examples are in another language, translate them faithfully before asking. Keep task logic and formatting identical.\n\n${baseSystemPrompt}`;
+}
+
+function detectStartIntent(text: string | undefined): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return !!t.match(
+    /(let'?s\s*(go|begin|start)|\b(start|begin|go)\b|c['’]est parti|on commence|commen[cs]ons|je suis (pr[eé]t|ready)|lance|d[eé]marre|d[eé]butons)/
+  );
+}
+
+function hasTriggerOrchestrator(s: string | undefined): boolean {
+  if (!s) return false;
+  return /"trigger_orchestrator"\s*:\s*true/.test(s);
+}
+
+function stripTechnicalBlocks(text: string): string {
+  return (text ?? "")
+    .replace(/```json[\s\S]*?```/g, "")
+    .replace(/\{\s*"trigger_orchestrator"\s*:\s*true\s*\}/g, "")
+    .replace(/\{\s*"score"\s*:\s*[1-5]\s*\}/g, "")
+    .replace(/\[\[\s*SCORE\s*=\s*[1-5]\s*\]\]/g, "")
+    .trim();
+}
+
+function extractScore(s: string): number | null {
+  if (!s) return null;
+  const m = s.match(/\[\[\s*SCORE\s*=\s*([1-5])\s*\]\]|["']?score["']?\s*:\s*([1-5])/i);
+  if (!m) return null;
+  const n = parseInt((m[1] || m[2]) as string, 10);
+  return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null;
+}
+
+async function callOpenAI(messages: Msg[], model = "gpt-4", temperature = 0.2) {
+  const completion = await openai.chat.completions.create({ model, messages, temperature });
+  return completion.choices?.[0]?.message?.content?.trim() || "";
+}
+
+async function ensureBigFiveRow(supabase: SupabaseClient, userId: string) {
+  const { data } = await supabase.from("big_five").select("user_id").eq("user_id", userId).maybeSingle();
+  if (!data) {
+    console.log("➕ Création big_five row pour", userId);
+    await supabase.from("big_five").insert({ user_id: userId });
+  }
+}
+
+async function getBigFiveRow(supabase: SupabaseClient, userId: string) {
+  const { data } = await supabase.from("big_five").select("*").eq("user_id", userId).maybeSingle();
+  return data as any | null;
+}
+
+function findCurrentIndex(row: any): number {
+  // Première case qN encore vide → c’est la question active
+  for (let i = 1; i <= 120; i++) {
+    if (row?.[`q${i}`] == null) return i;
+  }
+  return 121; // tout rempli
+}
+
+async function getLastStimulus(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("memories")
+    .select("role, content")
+    .eq("user_id", userId)
+    .eq("layer", "short")
+    .order("created_at", { ascending: false })
+    .limit(24);
+  if (error || !data) return null;
+  for (const m of data) {
+    if (m.role === "assistant" && typeof m.content === "string" && m.content.startsWith("[STIMULUS]")) {
+      const parts = m.content.split("\n");
+      parts.shift();
+      const stim = parts.join("\n").trim();
+      if (stim) return stim;
+    }
+  }
+  return null;
+}
+
+async function getRecentShortMemoriesAsChat(
+  supabase: SupabaseClient,
+  userId: string,
+  limit = 8
+): Promise<Msg[]> {
+  const { data, error } = await supabase
+    .from("memories")
+    .select("role, content, created_at")
+    .eq("user_id", userId)
+    .eq("layer", "short")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  // On renvoie du plus ancien au plus récent pour le chat
+  return data
+    .slice().reverse()
+    .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content })) as Msg[];
+}
+
+// ------------ Route ------------
+export async function POST(req: Request) {
+  try {
+    console.log("🔐 Auth...");
+    const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token) return NextResponse.json({ error: "Unauthorized: no token" }, { status: 401 });
+
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    );
+
+    const { data: authData, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !authData?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized: invalid token" }, { status: 401 });
+    }
+    const userId = authData.user.id;
+    console.log("✅ User:", userId);
+
+    await ensureBigFiveRow(supabase, userId);
+    const bfRowAtStart = await getBigFiveRow(supabase, userId);
+    const isComplete = bfRowAtStart?.is_complete === true;
+
+    // ---- Parse body ----
+    const body = await req.json();
+    const rawMessage: string | undefined = typeof body.message === "string" ? body.message.trim() : undefined;
+    const assistantMessageFromClient: string | undefined =
+      typeof body.assistant_message === "string" ? body.assistant_message.trim() : undefined;
+    const rawContent: ChatContentPart[] | undefined = Array.isArray(body.content) ? body.content : undefined;
+
+    // Compose user input (texte + image décrite)
+    let composedUserInput = "";
+    const hasImage = !!rawContent?.some((p) => p.type === "image_url" && p.image_url?.url);
+    const firstImageUrl = rawContent?.find((p): p is ImagePart => p.type === "image_url")?.image_url?.url;
+
+    if (hasImage && firstImageUrl) {
+      console.log("🖼️ Image détectée, analyse...");
+      const description = await analyzeImage(firstImageUrl);
+      composedUserInput = rawMessage ? `${rawMessage}\n\n[Image décrite]\n${description}` : description;
+    } else {
+      composedUserInput = rawMessage ?? (rawContent as TextPart[])?.map((p) => p.text).join("\n") ?? "";
+    }
+
+    console.log("💬 Input user:", composedUserInput || "(vide)");
+    // Log assistant_message s’il est envoyé par le client (optionnel)
+    if (assistantMessageFromClient) console.log("🤝 assistant_message (client):", assistantMessageFromClient);
+
+    // ---- Stocker le message user si présent ----
+    if (composedUserInput) {
+      await storeInShort(supabase, userId, "user", composedUserInput);
+    }
+
+    // ---- Phase: COMPLETE (test déjà fini) ----
+    if (isComplete) {
+      console.log("🛑 Test déjà complet → phase 'complete'");
+      const sys = buildSystemPrompt({ phase: "complete" });
+      const history = await getRecentShortMemoriesAsChat(supabase, userId, 10);
+      const messages: Msg[] = [ { role: "system", content: sys }, ...history, { role: "user", content: composedUserInput || "..." } ];
+      const reply = await callOpenAI(messages, "gpt-4", 0.2);
+      const cleaned = stripTechnicalBlocks(reply);
+      await storeInShort(supabase, userId, "assistant", cleaned || reply);
+      return NextResponse.json({ message: cleaned || reply });
+    }
+
+    // ---- Détection d'un trigger envoyé depuis le client (si frontend passe assistant_message) ----
+    if (assistantMessageFromClient && hasTriggerOrchestrator(assistantMessageFromClient)) {
+      console.log("🚀 Trigger orchestrator (depuis assistant_message client)");
+      const enthusiasm = stripTechnicalBlocks(assistantMessageFromClient);
+      if (enthusiasm) await storeInShort(supabase, userId, "assistant", enthusiasm);
+
+      // QN actuelle = première colonne vide
+      const bfRow = await getBigFiveRow(supabase, userId);
+      let step = findCurrentIndex(bfRow);
+      if (step > 120) step = 1;
+      const stimulus = getBigFiveQuestion(step);
+      await storeInShort(supabase, userId, "assistant", `[STIMULUS]\n${stimulus}`);
+
+      const lang = await detectLanguageFromMemory(supabase, userId);
+const baseSys = buildSystemPrompt({ phase: "big_five", stimulus });
+const sys = localizeSystem(baseSys, lang);
+const messages: Msg[] = [{ role: "system", content: sys }, { role: "user", content: "..." }];
+      console.log("🤖 GPT start Q", step);
+      const firstQ = await callOpenAI(messages, "gpt-4", 0.2);
+      await storeInShort(supabase, userId, "assistant", stripTechnicalBlocks(firstQ) || firstQ);
+
+      // Afficher enthousiasme + question dans la même réponse (le front affiche tout)
+      const out = (enthusiasm ? enthusiasm + "\n\n" : "") + (stripTechnicalBlocks(firstQ) || firstQ);
+      return NextResponse.json({ message: out });
+    }
+
+    // ---- Détection d'intention de commencer (backend gère confirmation) ----
+    if (detectStartIntent(composedUserInput)) {
+      console.log("✅ Intent de démarrer détecté → phase 'confirmation'");
+      const confSys = buildSystemPrompt({ phase: "confirmation" });
+      const confMessages: Msg[] = [{ role: "system", content: confSys }, { role: "user", content: composedUserInput }];
+      const confReply = await callOpenAI(confMessages, "gpt-4", 0.0);
+      console.log("💬 CONF reply:", confReply);
+      const enthusiasm = stripTechnicalBlocks(confReply);
+      if (enthusiasm) await storeInShort(supabase, userId, "assistant", enthusiasm);
+
+      // S'il y a trigger → on enchaîne immédiatement sur QN (souvent Q1)
+      if (hasTriggerOrchestrator(confReply)) {
+        const bfRow = await getBigFiveRow(supabase, userId);
+        let step = findCurrentIndex(bfRow);
+        if (step > 120) step = 1;
+        const stimulus = getBigFiveQuestion(step);
+        console.log(`📌 Stimulus q${step}:`, stimulus);
+        await storeInShort(supabase, userId, "assistant", `[STIMULUS]\n${stimulus}`);
+
+        const lang = await detectLanguageFromMemory(supabase, userId);
+const baseSys = buildSystemPrompt({ phase: "big_five", stimulus });
+const sys = localizeSystem(baseSys, lang);
+const messages: Msg[] = [{ role: "system", content: sys }, { role: "user", content: "..." }];
+        console.log("🤖 GPT start Q", step);
+        const firstQ = await callOpenAI(messages, "gpt-4", 0.2);
+        const firstQClean = stripTechnicalBlocks(firstQ);
+        await storeInShort(supabase, userId, "assistant", firstQClean || firstQ);
+
+        // Retourner l'enthousiasme + la 1ère question
+        const out = (enthusiasm ? enthusiasm + "\n\n" : "") + (firstQClean || firstQ);
+        return NextResponse.json({ message: out });
+      }
+
+      // Pas de trigger (CONF path) → renvoyer juste la phrase de clarification
+      return NextResponse.json({ message: enthusiasm || confReply });
+    }
+
+    // ---- Phase Big Five en cours ? (y a-t-il un stimulus en attente) ----
+    const pendingStimulus = await getLastStimulus(supabase, userId);
+    if (pendingStimulus) {
+      console.log("🧭 Stimulus en cours détecté → phase 'big_five'");
+      const lang = await detectLanguageFromMemory(supabase, userId);
+const baseSys = buildSystemPrompt({ phase: "big_five", stimulus: pendingStimulus });
+const sys = localizeSystem(baseSys, lang);
+// Conserver un peu d'historique court pour permettre les relances / nuance
+      const history = await getRecentShortMemoriesAsChat(supabase, userId, 8);
+      const messages: Msg[] = [{ role: "system", content: sys }, ...history, { role: "user", content: composedUserInput || "..." }];
+
+      const assistant = await callOpenAI(messages, "gpt-4", 0.2);
+      console.log("💬 BIG5 assistant:", assistant);
+      const score = extractScore(assistant);
+      const visibleAssistant = stripTechnicalBlocks(assistant);
+      if (visibleAssistant) await storeInShort(supabase, userId, "assistant", visibleAssistant);
+
+      // Si pas de score → l'IA est encore en train d'explorer (relance 1-2 fois)
+      if (score == null) {
+        console.log("ℹ️ Pas de SCORE détecté → on renvoie la réponse telle quelle");
+        return NextResponse.json({ message: visibleAssistant || assistant });
+      }
+
+      console.log("🧠 SCORE détecté:", score);
+
+      // Écrire score dans la bonne colonne qN (première vide)
+      const row = await getBigFiveRow(supabase, userId);
+      if (!row) {
+        console.error("❌ big_five row introuvable pour user:", userId);
+        return NextResponse.json({ error: "big_five missing" }, { status: 500 });
+      }
+
+      const currentIndex = findCurrentIndex(row); // c'est bien la qN qu'on vient de scorer
+      const col = `q${currentIndex}`;
+      console.log(`📝 Écriture ${col} = ${score}`);
+      await supabase.from("big_five").update({ [col]: score }).eq("user_id", userId);
+
+      // Fin de test si Q120 vient d'être remplie
+      if (currentIndex === 120) {
+        console.log("🏁 Q120 atteinte → is_complete = true");
+        await supabase.from("big_five").update({ is_complete: true }).eq("user_id", userId);
+        const doneMsg = "✅ Test terminé. Merci pour ta participation.";
+        await storeInShort(supabase, userId, "assistant", doneMsg);
+        return NextResponse.json({ message: doneMsg });
+      }
+
+      // Sinon, préparer Qn+1 et la poser immédiatement
+      const nextIndex = currentIndex + 1;
+      const nextStimulus = getBigFiveQuestion(nextIndex);
+      console.log(`➡️ Préparation stimulus q${nextIndex}`);
+      await storeInShort(supabase, userId, "assistant", `[STIMULUS]\n${nextStimulus}`);
+
+      const langNext = await detectLanguageFromMemory(supabase, userId);
+const baseNextSys = buildSystemPrompt({ phase: "big_five", stimulus: nextStimulus });
+const nextSys = localizeSystem(baseNextSys, langNext);
+const nextHistory = await getRecentShortMemoriesAsChat(supabase, userId, 8);
+      const nextMessages: Msg[] = [{ role: "system", content: nextSys }, ...nextHistory, { role: "user", content: "..." }];
+      console.log("📤 GPT → Q", nextIndex);
+      const nextQ = await callOpenAI(nextMessages, "gpt-4", 0.2);
+      const nextQClean = stripTechnicalBlocks(nextQ);
+      if (nextQClean) await storeInShort(supabase, userId, "assistant", nextQClean);
+      return NextResponse.json({ message: nextQClean || nextQ });
+    }
+
+    // ---- Phase INTRO par défaut ----
+    console.log("👋 Phase 'intro'");
+    const sys = buildSystemPrompt({ phase: "intro" });
+    const history = await getRecentShortMemoriesAsChat(supabase, userId, 6);
+    const messages: Msg[] = [{ role: "system", content: sys }, ...history, { role: "user", content: composedUserInput || "salut" }];
+    const reply = await callOpenAI(messages, "gpt-4", 0.2);
+    const cleaned = stripTechnicalBlocks(reply);
+    await storeInShort(supabase, userId, "assistant", cleaned || reply);
+    return NextResponse.json({ message: cleaned || reply });
+
+  } catch (err) {
+    console.error("❌ Error in ask route:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}

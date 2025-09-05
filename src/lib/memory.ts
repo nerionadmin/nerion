@@ -1,122 +1,50 @@
-// lib/memory.ts — VERSION NETTOYÉE (classification immédiate)
-import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
+// lib/memory.ts — mémoire short uniquement, GPT lit du plus récent au plus ancien
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
-type MemoryRole = "user" | "assistant";
-
-// ✅ Prompt mémoire filtrée, propre
-const memoryFilterPrompt = `
-You are a memory filter AI.
-
-Your task is to decide if a user message contains personal information that could help understand the user over time — their identity, preferences, values, emotions, or lifestyle.
-
-Mark it as "persistent" if it includes:
-• Anything about their name, age, gender, or where they live
-• Preferences or attachments to places (city, country, climate, dream destination, or fictional worlds)
-• Personal tastes (food, music, aesthetics, fashion, etc.)
-• Emotional expressions, habits, routines, or experiences
-• Physical traits, body goals, style, or health info
-• Relationship status, history, expectations, libido, etc.
-• Opinions or ideas that seem tied to their identity or worldview
-
-Mark it as "short" only if:
-• It’s clearly a generic question, a joke, or unrelated to the user's self
-• It’s vague and has no personal element
-• It’s purely about external topics with no self-reference
-
-Reply strictly with: \`yes\` or \`no\` only.
-`.trim();
+export type MemoryRole = "user" | "assistant";
 
 /**
- * Lecture mémoire intelligente :
- * - 1) Tente de répondre avec les 20 derniers SHORT
- * - 2) Sinon, regarde dans PERSISTENT
- * - 3) Sinon, renvoie []
- */
-export async function getRelevantMemories(userId: string, userMessage: string) {
-  const { data: short } = await supabase
-    .from("memories")
-    .select("role, content")
-    .eq("user_id", userId)
-    .eq("layer", "short")
-    .order("created_at", { ascending: true })
-    .limit(20);
-
-  if (short && short.length > 0) return short;
-
-  const { data: persistent } = await supabase
-    .from("memories")
-    .select("role, content")
-    .eq("user_id", userId)
-    .eq("layer", "persistent")
-    .order("created_at", { ascending: true });
-
-  if (persistent && persistent.length > 0) return persistent;
-
-  return [];
-}
-
-/**
- * ⬇️ NOUVELLE LOGIQUE (remplace l'ancienne promotion différée) ⬇️
- * - Analyse immédiate du message reçu via GPT-4o
- * - Classement direct: 'persistent' si "yes", sinon 'short'
- * - Insertion unique (pas de duplication, pas de promotion ultérieure)
+ * Stocke un message en mémoire courte (short).
  */
 export async function storeInShort(
+  supabase: SupabaseClient,
   userId: string,
   role: MemoryRole,
   content: string
 ) {
-  // 1) GPT-4o évalue le message courant
-  let layer: "short" | "persistent" = "short";
-  try {
-    const evalResp = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: 0,
-      messages: [
-        { role: "system", content: memoryFilterPrompt },
-        { role: "user", content },
-      ],
-    });
-
-    const verdict = String(evalResp.choices?.[0]?.message?.content ?? "")
-      .trim()
-      .toLowerCase();
-
-    if (verdict === "yes") {
-      layer = "persistent";
-    } else {
-      layer = "short";
-    }
-  } catch (e) {
-    // En cas d'échec OpenAI, on tombe en 'short' pour ne jamais perdre le message
-    console.warn("⚠️ OpenAI eval failed — defaulting to 'short'", e);
-    layer = "short";
-  }
-
-  // 2) Insertion unique dans la couche décidée par GPT-4o
-  const ins = await supabase.from("memories").insert({
+  const { error } = await supabase.from("memories").insert({
     user_id: userId,
     role,
     content,
-    layer,
+    layer: "short",
   });
 
-  if (ins.error) {
-    console.error("❌ insert memory failed", {
-      userId,
-      role,
-      layer,
-      preview: content.slice(0, 120),
-      error: ins.error,
-    });
-    throw ins.error;
+  if (error) {
+    console.error("❌ Échec insertion memory short", error);
+    throw error;
   }
+}
+
+/**
+ * Récupère les messages short depuis Supabase,
+ * dans l’ordre du plus récent au plus ancien (comme demandé).
+ */
+export async function getRecentShortMemories(
+  supabase: SupabaseClient,
+  userId: string
+) {
+  const { data, error } = await supabase
+    .from("memories")
+    .select("role, content, created_at")
+    .eq("user_id", userId)
+    .eq("layer", "short")
+    .order("created_at", { ascending: false }); // ✅ GPT lit d’abord les plus récents
+
+  if (error) {
+    console.error("❌ Erreur lecture memory short", error);
+    return [];
+  }
+
+  return (data ?? []).map(({ role, content }) => ({ role, content }));
 }

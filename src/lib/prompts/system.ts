@@ -96,10 +96,8 @@ Memory usage guidelines:
 
 export type OrchestrationPhase = "intro" | "big_five" | "complete" | "default";
 
-type BuildParams =
-  | { phase?: OrchestrationPhase; stimulus?: string }
-  | Headers
-  | undefined;
+export interface BuildSystemPromptOpts { phase?: OrchestrationPhase; stimulus?: string }
+type BuildParams = BuildSystemPromptOpts | Headers | undefined;
 
 /**
  * buildSystemPrompt
@@ -109,8 +107,8 @@ type BuildParams =
  * - "default"  : persona outside of test
  */
 export function buildSystemPrompt(arg?: BuildParams): string {
-  const isParamsObject = arg && typeof arg === "object" && !("append" in (arg as any));
-  const params = (isParamsObject ? (arg as { phase?: OrchestrationPhase; stimulus?: string }) : {}) ?? {};
+  const isParamsObject = typeof arg === "object" && arg !== null && !(arg instanceof Headers);
+  const params: BuildSystemPromptOpts = isParamsObject ? (arg as BuildSystemPromptOpts) : {};
   const phase: OrchestrationPhase = params.phase ?? "default";
   const stimulus = params.stimulus?.trim();
 

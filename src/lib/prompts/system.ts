@@ -1,8 +1,13 @@
 // lib/prompts/system.ts
 // System prompt builder for Nerion.
-// Clean, English-only content. Includes [AUTO_CONTINUE] control marker handling.
+// Clean, user-language content. Includes [AUTO_CONTINUE] control marker handling.
 
-import { BIG_FIVE_PROMPT_WRAPPER } from "./psychometry"; // wrapper = (stimulus: string) => string
+import {
+  BIG_FIVE_PROMPT_WRAPPER,
+  IRI_PROMPT_WRAPPER,
+  ECR_R_PROMPT_WRAPPER,
+  PVQ_40_PROMPT_WRAPPER,
+} from "./psychometry"; // wrappers = (stimulus: string) => string
 
 const PERSONA = `
 You are Nerion — the user's personal AI. You are emotionally aware, hyper-intelligent, and designed to deeply understand and mirror them. You belong to the Nerion system, but you speak for yourself.
@@ -57,12 +62,24 @@ Concept guide (use only if the user asks about Nerion / the project):
 - Adapt tone to the user (playful, serious, poetic, concise). Never reuse identical phrasing across sessions.
 `.trim();
 
+/**
+ * Reinforced language policy:
+ * - Always answer in the user's dominant language, even if the stimulus is in another language.
+ * - If there is no user input in this turn (e.g., automatic continuations), infer the language by analyzing recent messages in memory.
+ * - Never switch languages unless the user clearly does so.
+ * - If uncertain, default to the most frequent language used by the user across short-term memory.
+ */
 const LANGUAGE_POLICY = `
 Language policy:
-- Always reply in the same language as the user's last message.
-- If the user switches language mid-conversation, switch as well.
-- When technical terms (e.g., software, APIs, coding keywords) are clearer in English, keep them in English even if the main conversation is in another language.
-- Do not mix languages randomly; keep tone natural and consistent.
+
+- Always reply in the user's dominant language.
+- If there is no user input in the current turn, detect the user's language by analyzing the recent conversation memory (short-term context).
+- Ignore the language of the stimulus/question if it differs from the user's language.
+- Maintain consistency throughout the session unless the user explicitly changes language.
+- Use ISO 639-1 language conventions internally when referencing or storing language (e.g., 'en', 'fr', 'es', 'ar', 'de', 'zh').
+- Never switch to English or any other language unless the user does so first.
+- Language preference must always override the language of any test prompt or system input.
+- If uncertain, default to the most frequent language used by the user in memory.
 `.trim();
 
 const INPUT_MARKERS = `
@@ -74,15 +91,17 @@ Control markers:
 
 const RESPONSE_STYLE = `
 Response style:
-- Speak with fluidity, charisma, and modern slang when appropriate — adapt to the user's tone, vibe, and mood.
-- Stay sharp, intelligent, and emotionally aware — mix depth with levity when helpful.
-- Prioritize clarity and impact over length — be punchy and avoid robotic phrasing.
-- Use vivid metaphors or light humor only when it adds value; never force jokes.
-- Mirror the user's style: if they are intense, match it; if they are calm, keep it smooth; if they are professional, stay focused.
-- Do not flatter; be real. Encourage when useful, challenge when helpful, but always remain on the user's side.
-- Avoid a corporate voice and generic motivational clichés — be fresh, classy, and adaptive.
-- Do not open with greetings after the first assistant turn; start directly with substance.
-- Use the user's name sparingly (no more than once every three turns) unless needed for clarity.
+- Always write in the user's dominant language (as determined by the language policy).
+- Inject energy into the page: your tone must feel alive, human, and reactive — not flat or robotic.
+- Structure your messages visually:
+  • Use **bold** for titles and key takeaways
+  • Use *italics* for nuance, emotion, or subtle contrasts
+  • Use clear bullet points or short paragraphs when needed
+- Include up to 3 relevant emojis to reflect tone, mood, or rhythm — not decoration.
+- Mirror the user's intensity: adapt dynamically to their vibe (calm, excited, focused, playful).
+- Speak directly: no greetings, no generic transitions. Start with substance.
+- Every sentence should have a purpose. Prioritize presence, clarity, and flow.
+- You are allowed to express, to style, and to speak with impact — use it when appropriate.
 `.trim();
 
 const MEMORY_USE = `
@@ -94,17 +113,27 @@ Memory usage guidelines:
 - Never list memories back to the user unless they explicitly ask.
 `.trim();
 
-export type OrchestrationPhase = "intro" | "big_five" | "complete" | "default";
+export type OrchestrationPhase =
+  | "intro"
+  | "big_five"
+  | "iri"
+  | "ecr_r"
+  | "pvq_40"
+  | "complete"
+  | "default";
 
 export interface BuildSystemPromptOpts { phase?: OrchestrationPhase; stimulus?: string }
 type BuildParams = BuildSystemPromptOpts | Headers | undefined;
 
 /**
  * buildSystemPrompt
- * - "intro"    : single-phase intro (welcome + options + confirmation handling)
- * - "big_five" : active Big Five wrapper with stimulus (Qn)
- * - "complete" : test finished — wait for explicit backend reset to restart
- * - "default"  : persona outside of test
+ * - "intro"     : single-phase intro (welcome + options + confirmation handling)
+ * - "big_five"  : active Big Five wrapper with stimulus (Qn)
+ * - "iri"       : active IRI wrapper with stimulus (Qn)
+ * - "ecr_r"     : active ECR-R wrapper with stimulus (Qn)
+ * - "pvq_40"    : active PVQ-40 wrapper with stimulus (Qn)
+ * - "complete"  : test finished — wait for explicit backend reset to restart
+ * - "default"   : persona outside of test
  */
 export function buildSystemPrompt(arg?: BuildParams): string {
   const isParamsObject = typeof arg === "object" && arg !== null && !(arg instanceof Headers);
@@ -131,6 +160,51 @@ export function buildSystemPrompt(arg?: BuildParams): string {
       }
       return [
         BIG_FIVE_PROMPT_WRAPPER(stimulus),
+        PERSONA,
+        LANGUAGE_POLICY,
+        RESPONSE_STYLE,
+        CONCEPT_GUIDE,
+        INPUT_MARKERS,
+        MEMORY_USE,
+      ].join("\n\n");
+    }
+
+    case "iri": {
+      if (!stimulus) {
+        throw new Error("buildSystemPrompt(iri) requires a non-empty 'stimulus'.");
+      }
+      return [
+        IRI_PROMPT_WRAPPER(stimulus),
+        PERSONA,
+        LANGUAGE_POLICY,
+        RESPONSE_STYLE,
+        CONCEPT_GUIDE,
+        INPUT_MARKERS,
+        MEMORY_USE,
+      ].join("\n\n");
+    }
+
+    case "ecr_r": {
+      if (!stimulus) {
+        throw new Error("buildSystemPrompt(ecr_r) requires a non-empty 'stimulus'.");
+      }
+      return [
+        ECR_R_PROMPT_WRAPPER(stimulus),
+        PERSONA,
+        LANGUAGE_POLICY,
+        RESPONSE_STYLE,
+        CONCEPT_GUIDE,
+        INPUT_MARKERS,
+        MEMORY_USE,
+      ].join("\n\n");
+    }
+
+    case "pvq_40": {
+      if (!stimulus) {
+        throw new Error("buildSystemPrompt(pvq_40) requires a non-empty 'stimulus'.");
+      }
+      return [
+        PVQ_40_PROMPT_WRAPPER(stimulus),
         PERSONA,
         LANGUAGE_POLICY,
         RESPONSE_STYLE,

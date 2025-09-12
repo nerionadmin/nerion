@@ -1,18 +1,14 @@
 'use client';
 import { Mic, Volume2, Upload, LogOut, Sun, Moon, Menu, X } from 'lucide-react';
-import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useTheme } from 'next-themes';
 import Logo from "@/components/Logo";
 import TypingDots from "../components/TypingDots";
-
+import ReactMarkdown from "react-markdown";
 
 // Petit type local pour l'événement de MediaRecorder
 type DataAvailableEvent = { data: Blob };
-
-// ➕ Helper pour retirer le gras Markdown (**…**)
-const stripMdEmphasis = (s: string) => s.replace(/\*\*(.*?)\*\*/g, '$1');
 
 // ✅ Typage propre pour webkitAudioContext
 declare global {
@@ -28,15 +24,6 @@ export default function Home() {
   const [recording, setRecording] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
-  const autoResize = (el: HTMLTextAreaElement) => {
-  const MIN = 40; // px (hauteur de base)
-  const MAX = 240; // px (≈ max-h-60)
-  el.style.height = 'auto';
-  const needed = el.scrollHeight;
-  const newH = Math.max(Math.min(needed, MAX), MIN);
-  el.style.height = newH + 'px';
-  el.style.overflowY = needed > MAX ? 'auto' : 'hidden';
-};
 
   // 🎛️ UI: niveau de voix (0 → 1) pour afficher des vibrations dans la barre de recherche
   const [voiceLevel, setVoiceLevel] = useState(0);
@@ -57,10 +44,9 @@ export default function Home() {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const isSpeakingRef = useRef<boolean>(false);
 
-  const USER_ID = 'demo_user_1'; // provisoire
-
   // ⛔️ Gate d’auth
   const supabase = createClientComponentClient();
+
   // ⬇️ Échange ?code=... -> session (cookies sb-...) — version corrigée
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -77,7 +63,6 @@ export default function Home() {
       })
       .catch(() => {});
   }, [supabase]);
-  // ⬆️ AJOUT UNIQUE
 
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
   useEffect(() => {
@@ -95,7 +80,7 @@ export default function Home() {
     };
   }, [supabase]);
 
-  // 🔽🔽🔽 UNIQUE MODIF ICI : handler du bouton Google (ajout queryParams)
+  // 🔽🔽🔽 handler du bouton Google (ajout queryParams)
   const handleGoogleLogin = async () => {
     const origin =
       typeof window !== 'undefined' && window.location?.origin
@@ -113,7 +98,6 @@ export default function Home() {
       },
     });
   };
-  // 🔼🔼🔼 UNIQUE MODIF ICI
 
   // ✅ Helpers storage pour éviter les erreurs "load/save" (Safari privé, iFrame, etc.)
   const safeStorage = {
@@ -143,66 +127,86 @@ export default function Home() {
     }
   };
 
-  const handleSubmit = async (customInput?: string) => {
-  const promptToSend = customInput ?? input;
-  if (!promptToSend.trim()) return;
+  const autoResize = (el: HTMLTextAreaElement) => {
+    const MIN = 40; // px (hauteur de base)
+    const MAX = 240; // px (≈ max-h-60)
+    el.style.height = 'auto';
+    const needed = el.scrollHeight;
+    const newH = Math.max(Math.min(needed, MAX), MIN);
+    el.style.height = newH + 'px';
+    el.style.overflowY = needed > MAX ? 'auto' : 'hidden';
 
-  const userMessage = `🧠 ${promptToSend}`;
-  setMessages((prev) => [...prev, userMessage]);
-  setHasSentMessage(true);
-  setInput('');
-  setLoading(true);
-
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-
-    const response = await fetch('/api/ask', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ message: promptToSend }),
-    });
-
-    const data: { message?: string } = await response.json();
-
-    if (response.ok && data.message) {
-      setMessages((prev) => [...prev, '🤖 ']);
-
-      // Retire tout bloc JSON (signal, score, etc.) du texte affiché/parlé
-      const cleaned = (data.message ?? '')
-  .replace(/```json[\s\S]*?```/g, '')
-  .replace(/\{\s*"trigger_orchestrator"\s*:\s*true\s*\}/g, '')
-  .replace(/\{\s*"score"\s*:\s*[1-5]\s*\}/g, '')
-  .replace(/\[\[\s*SCORE\s*=\s*[1-5]\s*\]\]/g, '')
-  .trim();
-
-      const replyText = stripMdEmphasis(cleaned);
-
-      let i = 0;
-      const interval = setInterval(() => {
-        setMessages((prev) => {
-          const updated = prev.slice(0, -1);
-          return [...updated, '🤖 ' + replyText.slice(0, i)];
-        });
-        i++;
-        if (i > replyText.length) clearInterval(interval);
-      }, 30);
-
-      await stopRecordingAndCleanup();
-      speak(replyText);
-    } else {
-      setMessages((prev) => [...prev, '❌ Réponse invalide']);
+    // ✅ Si champ vidé → on réinitialise la hauteur à MIN
+    if (!el.value.trim()) {
+      el.style.height = MIN + 'px';
+      el.style.overflowY = 'hidden';
     }
-  } catch (error: unknown) {
-    console.error(error);
-    setMessages((prev) => [...prev, '⚠️ Une erreur est survenue']);
-  }
+  };
 
-  setLoading(false);
-};
+  const [hasSentMessage, setHasSentMessage] = useState(false);
+
+  const handleSubmit = async (customInput?: string) => {
+    if (loading) return; // ✅ Anti-flood : bloque si une réponse est en cours
+
+    const promptToSend = customInput ?? input;
+    if (!promptToSend.trim()) return;
+
+    const userMessage = `🧠 ${promptToSend}`;
+    setMessages((prev) => [...prev, userMessage]);
+    setHasSentMessage(true);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const response = await fetch('/api/ask', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message: promptToSend }),
+      });
+
+      const data: { message?: string } = await response.json();
+
+      if (response.ok && data.message) {
+        setMessages((prev) => [...prev, '🤖 ']);
+
+        // Retire tout bloc JSON (signal, score, etc.) du texte affiché/parlé
+        const cleaned = (data.message ?? '')
+          .replace(/```json[\s\S]*?```/g, '')
+          .replace(/\{\s*"trigger_orchestrator"\s*:\s*true\s*\}/g, '')
+          .replace(/\{\s*"score"\s*:\s*[1-5]\s*\}/g, '')
+          .replace(/\[\[\s*SCORE\s*=\s*[1-5]\s*\]\]/g, '')
+          .trim();
+
+        const replyText = cleaned;
+
+        let i = 0;
+        const interval = setInterval(() => {
+          setMessages((prev) => {
+            const updated = prev.slice(0, -1);
+            return [...updated, '🤖 ' + replyText.slice(0, i)];
+          });
+          i++;
+          if (i > replyText.length) clearInterval(interval);
+        }, 30);
+
+        await stopRecordingAndCleanup();
+        speak(replyText);
+      } else {
+        setMessages((prev) => [...prev, '❌ Réponse invalide']);
+      }
+    } catch (error: unknown) {
+      console.error(error);
+      setMessages((prev) => [...prev, '⚠️ Une erreur est survenue']);
+    }
+
+    setLoading(false);
+  };
 
   const speak = async (text: string) => {
     if (!isSpeakerOn) return;
@@ -233,7 +237,7 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        console.error('Erreur API ElevenLabs:', await res.text().catch(() => ''));
+        console.error('Erreur API Voice:', await res.text().catch(() => ''));
         return;
       }
 
@@ -475,102 +479,17 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // === NEW: refs + trigger pour upload image ===
+  // === NEW: refs + trigger pour upload fichier (sans logique d'image/photo)
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const triggerImagePicker = () => fileInputRef.current?.click();
+  const triggerFilePicker = () => fileInputRef.current?.click();
 
-  // === NEW: handler image → Supabase → /api/ask ===
-  const handleImagePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setHasSentMessage(true);
-
-    setLoading(true); // 👈 Active le spinner du bouton Envoyer
-
-    // placeholder dans le chat
-    setMessages((prev) => [...prev, '🖼️ Envoi de la photo…']);
-
-    try {
-      // 1) récupérer l'utilisateur (obligatoire pour le dossier /<uid>/ )
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert("Tu dois être connecté pour envoyer une photo.");
-        setIsAuthed(false);
-        return;
-      }
-
-      // 2) upload sous /<uid>/...  (compatible avec la policy SELECT par utilisateur)
-      const filePath = `${user.id}/${Date.now()}-${file.name}`;
-      const { error: uploadErr } = await supabase.storage.from('photos').upload(filePath, file);
-      if (uploadErr) throw uploadErr;
-
-      // 3) URL signée (bucket privé) — valable 1h
-      const { data: signed, error: signErr } = await supabase.storage
-        .from('photos')
-        .createSignedUrl(filePath, 60 * 60);
-      if (signErr) throw signErr;
-
-      const imageUrl = signed.signedUrl;
-
-      // ⚠️ Remplacer le placeholder par la vraie image dans le chat
-      setMessages((prev) => {
-        const updated = prev.slice(0, -1); // enlève "🖼️ Envoi de la photo…"
-        return [...updated, imageUrl];      // ajoute l’URL signée → affichée en <img>
-      });
-
-      // 3) /api/ask multimodal
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      const res = await fetch('/api/ask', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          content: [{ type: 'image_url', image_url: { url: imageUrl } }],
-        }),
-      });
-
-      const data: { message?: string } = await res.json();
-
-      if (res.ok && data.message) {
-        setMessages((prev) => [...prev, '🤖 ']);
-        // Retire tout bloc JSON (signal) du message affiché/parlé
-const cleaned = (data.message ?? '')
-  .replace(/```json[\s\S]*?```/g, '')
-  .replace(/\{\s*"trigger_orchestrator"\s*:\s*true\s*\}/g, '')
-  .replace(/\{\s*"score"\s*:\s*[1-5]\s*\}/g, '')
-  .replace(/\[\[\s*SCORE\s*=\s*[1-5]\s*\]\]/g, '')
-  .trim();
-
-const replyText = stripMdEmphasis(cleaned);
-
-        let i = 0;
-        const interval = setInterval(() => {
-          setMessages((prev) => {
-            const updated = prev.slice(0, -1);
-            return [...updated, '🤖 ' + replyText.slice(0, i)];
-          });
-          i++;
-          if (i > replyText.length) clearInterval(interval);
-        }, 30);
-
-        await stopRecordingAndCleanup();
-        speak(replyText);
-      } else {
-        setMessages((prev) => [...prev, '❌ Réponse invalide (image)']);
-      }
-    } catch (err) {
-      console.error('Upload/Analyse image', err);
-      setMessages((prev) => prev.slice(0, -1));
-      setMessages((prev) => [...prev, '⚠️ Erreur pendant l’envoi de la photo']);
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      setLoading(false); // 👈 Désactive le spinner du bouton Envoyer
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      console.log('Fichier sélectionné :', f);
     }
+    // reset pour permettre re-sélection du même fichier
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const VoiceMeter = ({ level, active }: { level: number; active: boolean }) => {
@@ -618,262 +537,248 @@ const replyText = stripMdEmphasis(cleaned);
 
   // === Theme toggle (Sun/Moon) ===
   const { theme, setTheme } = useTheme();
-  const [hasSentMessage, setHasSentMessage] = useState(false);
   const [mountedTheme, setMountedTheme] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => setMountedTheme(true), []);
 
   return (
-  <main className="flex flex-col h-[100dvh] bg-[var(--bg)] text-[var(--text)] sm:pl-14">
+    <main className="flex flex-col h-[100dvh] bg-[var(--bg)] text-[var(--text)] sm:pl-14">
 
-    <aside className="hidden sm:flex flex-col group fixed left-0 top-0 z-30 h-full w-[85px] hover:w-56 transition-[width] duration-200 ease-out bg-[var(--surface-2)] border-r border-[var(--border)]">
-  {/* Haut du tiroir */}
-  <div className="py-3 space-y-3">
-    {/* Logo centré dans la colonne fixe (ancré à gauche, ne bouge pas à l'ouverture) */}
-    <div className="w-[85px] flex items-center justify-center">
-      <Logo symbolOnly className="h-logo-md w-auto fill-black dark:fill-white" />
-    </div>
-  </div>
+      {/* Barre latérale (desktop) */}
+      <aside className="hidden sm:flex flex-col group fixed left-0 top-0 z-30 h-full w-[85px] hover:w-56 transition-[width] duration-200 ease-out bg-[var(--surface-2)] border-r border-[var(--border)]">
+        {/* Haut du tiroir */}
+        <div className="py-3 space-y-3">
+          <div className="w-[85px] flex items-center justify-center">
+            <Logo symbolOnly className="h-logo-md w-auto fill-black dark:fill-white" />
+          </div>
+        </div>
 
-  {/* Bas du tiroir : Thème + Logout (centrés dans la colonne fixe, ne bougent pas) */}
-  <div className="mt-auto w-full pb-10">
-    {/* Bouton thème : icône centrée, label à droite sans pousser l'icône */}
-    <div className="relative w-[85px] flex justify-center mb-10">
-      <button
-  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-  className="flex items-center text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-  title="Basculer le thème"
-  aria-label="Basculer le thème"
->
-  {!mountedTheme ? (
-    // Placeholder neutre (même taille), invisible => pas de décalage, pas de mismatch
-    <span className="block h-7 w-7 opacity-0" aria-hidden="true" />
-  ) : theme === 'dark' ? (
-    <Sun className="h-7 w-7" />
-  ) : (
-    <Moon className="h-7 w-7" />
-  )}
-</button>
-      <span className="absolute left-[100%] top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-sm">
-      </span>
-    </div>
+        {/* Bas du tiroir : Thème + Logout */}
+        <div className="mt-auto w-full pb-10">
+          <div className="relative w-[85px] flex justify-center mb-10">
+            <button
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="flex items-center text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+              title="Basculer le thème"
+              aria-label="Basculer le thème"
+            >
+              {!mountedTheme ? (
+                <span className="block h-7 w-7 opacity-0" aria-hidden="true" />
+              ) : theme === 'dark' ? (
+                <Sun className="h-7 w-7" />
+              ) : (
+                <Moon className="h-7 w-7" />
+              )}
+            </button>
+          </div>
 
-    {/* Icône centrée, label à droite sans déplacer l'icône */}
-    <div className="relative w-[85px] flex justify-center">
-      <button
-        onClick={handleLogout}
-        className="flex items-center text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-        title="Se déconnecter"
-        aria-label="Se déconnecter"
-      >
-        <LogOut className="h-8 w-8" />
-      </button>
-      <span className="absolute left-[100%] top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-sm">
-      </span>
-    </div>
-  </div>
-</aside>
+          <div className="relative w-[85px] flex justify-center">
+            <button
+              onClick={handleLogout}
+              className="flex items-center text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+              title="Se déconnecter"
+              aria-label="Se déconnecter"
+            >
+              <LogOut className="h-8 w-8" />
+            </button>
+          </div>
+        </div>
+      </aside>
 
+      {/* Header */}
       <header className="relative text-center px-4 py-6">
-  <div className="flex justify-center items-center" />
+        <div className="flex justify-center items-center" />
+        {/* 🔘 Hamburger (mobile) */}
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="sm:hidden absolute top-4 left-4 h-14 w-14 rounded-lg flex items-center justify-center transition bg-[var(--surface-2)] text-[var(--text-muted)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)]"
+          title="Ouvrir le menu"
+          aria-label="Ouvrir le menu"
+        >
+          <Menu size={22} />
+        </button>
+      </header>
 
-  {/* 🔘 Hamburger (mobile) */}
-  <button
-    onClick={() => setDrawerOpen(true)}
-    className="sm:hidden absolute top-4 left-4 h-14 w-14 rounded-lg flex items-center justify-center transition bg-[var(--surface-2)] text-[var(--text-muted)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)]"
-    title="Ouvrir le menu"
-    aria-label="Ouvrir le menu"
-  >
-    <Menu size={22} />
-  </button>
-</header>
+      {/* Champ caché unique pour sélection de fichier */}
+      <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelected} />
 
-    {!hasSentMessage ? (
-  <div className="flex flex-1 flex-col items-center justify-center px-4 text-center max-h-[80vh]">
-    <Logo className="h-logo-md w-auto mb-6 fill-black dark:fill-white" />
-    <div className="w-full max-w-3xl mx-auto bg-[var(--surface-2)] rounded-xl shadow-inner grid grid-rows-[auto_auto]">
-  {/* Ligne TEXTE */}
-  <div className="px-4 pt-3">
-    <textarea
-      value={input}
-      onChange={(e) => { setInput(e.target.value); autoResize(e.currentTarget); }}
-      onInput={(e) => autoResize(e.currentTarget)}
-      onPaste={(e) => autoResize(e.currentTarget)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
-      }}
-      placeholder="Pose ta question..."
-      enterKeyHint="send"
-      rows={1}
-      className="block w-full resize-none bg-transparent text-[var(--text)] placeholder-[var(--placeholder)] focus:outline-none text-base sm:text-lg leading-relaxed max-h-60 overflow-y-auto"
-      style={{ height: 40 }}
-    />
-  </div>
+      {/* État initial (avant 1er message) */}
+      {!hasSentMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center px-4 text-center max-h-[80vh]">
+          <Logo className="h-logo-md w-auto mb-6 fill-black dark:fill-white" />
+          <div className="w-full max-w-3xl mx-auto bg-[var(--surface-2)] rounded-xl shadow-inner grid grid-rows-[auto_auto]">
+            {/* Ligne TEXTE */}
+            <div className="px-4 pt-3 relative">
+              <textarea
+                value={input}
+                onChange={(e) => { setInput(e.target.value); autoResize(e.currentTarget); }}
+                onInput={(e) => autoResize(e.currentTarget)}
+                onPaste={(e) => autoResize(e.currentTarget)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!loading) handleSubmit();
+                  }
+                }}
+                placeholder="Pose ta question..."
+                enterKeyHint="send"
+                rows={1}
+                className="block w-full resize-none bg-transparent text-[var(--text)] placeholder-[var(--placeholder)] focus:outline-none text-base sm:text-lg leading-relaxed max-h-60 overflow-y-auto"
+                style={{ height: 40 }}
+              />
+              {/* VU-mètre voix */}
+              <VoiceMeter level={voiceLevel} active={recording} />
+            </div>
 
-  {/* Ligne BOUTONS (fixe) */}
-  <div className="px-2 py-2 flex items-center justify-end gap-2">
-    <button
-  onClick={handleVoiceInput}
-  className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out ${
-    recording
-      ? 'bg-[var(--danger)] text-white border-transparent'
-      : 'bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm'
-  }`}
-  aria-label="Dicter" title="Dicter"
->
-  <Mic size={20} />
-</button>
+            {/* Ligne BOUTONS */}
+            <div className="px-2 py-2 flex items-center justify-end gap-2">
+              <button
+                onClick={handleVoiceInput}
+                className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out ${
+                  recording
+                    ? 'bg-[var(--danger)] text-white border-transparent'
+                    : 'bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm'
+                }`}
+                aria-label="Dicter" title="Dicter"
+              >
+                <Mic size={20} />
+              </button>
 
-    <button
-  onClick={() => { setIsSpeakerOn(!isSpeakerOn); unlockAudioContext(); }}
-  className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm ${isSpeakerOn ? 'text-[var(--ring)]' : 'text-[var(--text)]'}`}
-  aria-label="Haut-parleur" title="Haut-parleur"
->
-  <Volume2 size={20} />
-</button>
+              <button
+                onClick={() => { setIsSpeakerOn(!isSpeakerOn); unlockAudioContext(); }}
+                className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm ${isSpeakerOn ? 'text-[var(--ring)]' : 'text-[var(--text)]'}`}
+                aria-label="Haut-parleur" title="Haut-parleur"
+              >
+                <Volume2 size={20} />
+              </button>
 
-    <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImagePicked} />
-    <button
-  onClick={triggerImagePicker}
-  className="h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm"
-  aria-label="Envoyer une image" title="Envoyer une image"
->
-  <Upload size={20} />
-</button>
-  </div>
-</div>
-  </div>
-) : (
-  <>
-    <section className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-      <div className="flex flex-col gap-4 max-w-3xl mx-auto min-h-full">
-        {messages.map((msg: string, i: number) => {
-  const isImage = msg.startsWith("http");
-  const isUser = msg.startsWith("🧠 ");
-  const clean = isImage ? msg : msg.replace(/^(🧠|🤖)\s?/, "");
-
-  // 🖼️ Images : centrées, largeur de lecture
-  if (isImage) {
-    return (
-      <div key={i} className="w-full">
-        <div className="max-w-3xl mx-auto">
-          <div className="flex justify-center">
-            <img
-              src={clean}
-              alt="Uploaded"
-              className="max-w-full max-h-[600px] rounded-lg object-contain border border-[var(--image-border)]"
-            />
+              <button
+                onClick={triggerFilePicker}
+                className="h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm"
+                aria-label="Ouvrir un fichier" title="Ouvrir un fichier"
+              >
+                <Upload size={20} />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    );
-  }
+      ) : (
+        <>
+          {/* Zone de conversation */}
+          <section className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
+            <div className="flex flex-col gap-4 max-w-3xl mx-auto min-h-full">
+              {messages.map((msg: string, i: number) => {
+                const isUser = msg.startsWith("🧠 ");
+                const clean = msg.replace(/^(🧠|🤖)\s?/, "");
 
-  // 🧑‍💻 Utilisateur : bulle à droite (couleurs existantes conservées)
-  if (isUser) {
-    return (
-      <div key={i} className="w-full">
-        <div className="max-w-md ml-auto">
-          <div className="bg-[var(--surface-2)] text-[var(--text)] p-4 rounded-md whitespace-pre-wrap break-words">
-            {clean}
+                // 🧑‍💻 Utilisateur : bulle à droite
+                if (isUser) {
+                  return (
+                    <div key={i} className="w-full">
+                      <div className="max-w-md ml-auto">
+                        <div className="bg-[var(--surface-2)] text-[var(--text)] p-4 rounded-md break-words">
+                          <ReactMarkdown>{clean}</ReactMarkdown>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // 🤖 IA : rendu Markdown
+                return (
+                  <div key={i} className="w-full">
+                    <div className="text-[var(--text)] leading-relaxed px-1">
+                      <ReactMarkdown>{clean}</ReactMarkdown>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {hasSentMessage && loading && (
+                <div className="w-full">
+                  <div className="max-w-3xl mx-auto">
+                    <TypingDots />
+                  </div>
+                </div>
+              )}
+
+              <div ref={bottomRef} />
+            </div>
+          </section>
+
+          {/* Barre d'input en bas */}
+          <div className="px-4 pt-2 pb-6 sm:px-6">
+            <div className="w-full max-w-3xl mx-auto bg-[var(--surface-2)] rounded-xl shadow-inner grid grid-rows-[auto_auto]">
+              {/* Ligne TEXTE */}
+              <div className="px-4 pt-3 relative">
+                <textarea
+                  value={input}
+                  onChange={(e) => { setInput(e.target.value); autoResize(e.currentTarget); }}
+                  onInput={(e) => autoResize(e.currentTarget)}
+                  onPaste={(e) => autoResize(e.currentTarget)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!loading) handleSubmit();
+                    }
+                  }}
+                  placeholder="Pose ta question..."
+                  enterKeyHint="send"
+                  rows={1}
+                  className="block w-full resize-none bg-transparent text-[var(--text)] placeholder-[var(--placeholder)] focus:outline-none text-base sm:text-lg leading-relaxed max-h-60 overflow-y-auto"
+                  style={{ height: 40 }}
+                />
+                <VoiceMeter level={voiceLevel} active={recording} />
+              </div>
+
+              {/* Ligne BOUTONS */}
+              <div className="px-2 py-2 flex items-center justify-end gap-2">
+                <button
+                  onClick={handleVoiceInput}
+                  className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out ${
+                    recording
+                      ? 'bg-[var(--danger)] text-white border-transparent'
+                      : 'bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm'
+                  }`}
+                  aria-label="Dicter" title="Dicter"
+                >
+                  <Mic size={20} />
+                </button>
+
+                <button
+                  onClick={() => { setIsSpeakerOn(!isSpeakerOn); unlockAudioContext(); }}
+                  className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm ${isSpeakerOn ? 'text-[var(--ring)]' : 'text-[var(--text)]'}`}
+                  aria-label="Haut-parleur" title="Haut-parleur"
+                >
+                  <Volume2 size={20} />
+                </button>
+
+                <button
+                  onClick={triggerFilePicker}
+                  className="h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm"
+                  aria-label="Ouvrir un fichier" title="Ouvrir un fichier"
+                >
+                  <Upload size={20} />
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    );
-  }
+        </>
+      )}
 
-  // 🤖 IA : texte à plat, centré, sans bulle
-  return (
-    <div key={i} className="w-full">
-      <div className="text-[var(--text)] whitespace-pre-wrap break-words leading-relaxed px-1">
-  {clean}
-</div>
-    </div>
-  );
-})}
-
-{hasSentMessage && loading && (
-  <div className="w-full">
-    <div className="max-w-3xl mx-auto">
-      <TypingDots />
-    </div>
-  </div>
-)}
-
-        <div ref={bottomRef} />
-      </div>
-    </section>
-
-    {/* ✅ Barre D’INPUT EN BAS (après 1er message) */}
-    <div className="px-4 pt-2 pb-6 sm:px-6">
-      <div className="w-full max-w-3xl mx-auto bg-[var(--surface-2)] rounded-xl shadow-inner grid grid-rows-[auto_auto]">
-  {/* Ligne TEXTE */}
-  <div className="px-4 pt-3">
-    <textarea
-      value={input}
-      onChange={(e) => { setInput(e.target.value); autoResize(e.currentTarget); }}
-      onInput={(e) => autoResize(e.currentTarget)}
-      onPaste={(e) => autoResize(e.currentTarget)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
-      }}
-      placeholder="Pose ta question..."
-      enterKeyHint="send"
-      rows={1}
-      className="block w-full resize-none bg-transparent text-[var(--text)] placeholder-[var(--placeholder)] focus:outline-none text-base sm:text-lg leading-relaxed max-h-60 overflow-y-auto"
-      style={{ height: 40 }}
-    />
-  </div>
-
-  {/* Ligne BOUTONS (fixe) */}
-  <div className="px-2 py-2 flex items-center justify-end gap-2">
-    <button
-  onClick={handleVoiceInput}
-  className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out ${
-    recording
-      ? 'bg-[var(--danger)] text-white border-transparent'
-      : 'bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm'
-  }`}
-  aria-label="Dicter" title="Dicter"
->
-  <Mic size={20} />
-</button>
-
-    <button
-  onClick={() => { setIsSpeakerOn(!isSpeakerOn); unlockAudioContext(); }}
-  className={`h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm ${isSpeakerOn ? 'text-[var(--ring)]' : 'text-[var(--text)]'}`}
-  aria-label="Haut-parleur" title="Haut-parleur"
->
-  <Volume2 size={20} />
-</button>
-
-    <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImagePicked} />
-    <button
-  onClick={triggerImagePicker}
-  className="h-10 w-10 flex items-center justify-center rounded-lg border transition-all duration-200 ease-out bg-[var(--surface-2)] text-[var(--text)] border-[var(--image-border)] hover:bg-[color-mix(in_srgb,var(--surface-2)_93%,black_7%)] hover:shadow-sm"
-  aria-label="Envoyer une image" title="Envoyer une image"
->
-  <Upload size={20} />
-</button>
-  </div>
-</div>
-    </div>
-  </>
-)}
-
-      {/* 🔒 Overlay d’auth grisé (pas flouté). Bloque l’UI tant que non connecté. */}
+      {/* 🔒 Overlay d’auth flouté (bloque l’UI tant que non connecté). */}
       {isAuthed === false && (
         <div className="fixed inset-0 z-50">
-          {/* voile gris */}
-          <div className="absolute inset-0 bg-[var(--scrim-60)]" />
+          {/* fond flouté + voile (adouci) */}
+          <div className="absolute inset-0 backdrop-blur-sm bg-black/30" />
           {/* carte centrale */}
           <div className="relative z-10 flex items-center justify-center h-full p-4">
             <div className="w-full max-w-md bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] border border-[var(--border)] rounded-2xl shadow-2xl p-6 text-center">
               {!hasSentMessage && (
-  <div className="flex justify-center mt-10 mb-6">
-    <Logo className="h-16 w-auto fill-black dark:fill-white" />
-  </div>
-)}
+                <div className="flex justify-center mt-10 mb-6">
+                  <Logo className="h-16 w-auto fill-black dark:fill-white" />
+                </div>
+              )}
               <h2 className="text-xl font-semibold mb-2">Connecte-toi pour continuer</h2>
               <p className="text-[var(--text-muted)] mb-5">
                 Ton espace est prêt. Authentifie-toi avec Google pour accéder à la conversation.
@@ -888,24 +793,57 @@ const replyText = stripMdEmphasis(cleaned);
           </div>
         </div>
       )}
-      {drawerOpen && (
-  <div className="sm:hidden fixed inset-0 z-50">
-    <div className="absolute inset-0 bg-[var(--scrim-40)]" onClick={() => setDrawerOpen(false)} />
-    <div className="absolute left-0 top-0 h-full w-64 bg-[var(--surface-2)] border-r border-[var(--border)] shadow-2xl p-3">
-      <div className="flex items-center justify-between mb-4">
-        <div className="h-10 w-10 rounded-xl bg-[var(--surface-3)] border border-[var(--image-border)] flex items-center justify-center text-lg font-black">N</div>
-        <button
-          onClick={() => setDrawerOpen(false)}
-          className="h-10 w-10 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-3)]"
-          aria-label="Fermer"
-        >
-          <X size={20} />
-        </button>
-      </div>
-    </div>
-  </div>
-)}
 
+      {/* Drawer mobile → même menu que desktop (état non‑survol) */}
+      {drawerOpen && (
+        <div className="sm:hidden fixed inset-0 z-50">
+          {/* Scrim pour fermer en touchant l'extérieur */}
+          <div
+            className="absolute inset-0 bg-[var(--scrim-40)]"
+            onClick={() => setDrawerOpen(false)}
+          />
+          {/* Menu identique à l’aside desktop (largeur 85px) */}
+          <aside className="absolute left-0 top-0 h-full w-[85px] bg-[var(--surface-2)] border-r border-[var(--border)] flex flex-col">
+            {/* Haut du tiroir */}
+            <div className="py-3 space-y-3">
+              <div className="w-[85px] flex items-center justify-center">
+                <Logo symbolOnly className="h-logo-md w-auto fill-black dark:fill-white" />
+              </div>
+            </div>
+
+            {/* Bas du tiroir : Thème + Logout */}
+            <div className="mt-auto w-full pb-10">
+              <div className="relative w-[85px] flex justify-center mb-10">
+                <button
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  className="flex items-center text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                  title="Basculer le thème"
+                  aria-label="Basculer le thème"
+                >
+                  {!mountedTheme ? (
+                    <span className="block h-7 w-7 opacity-0" aria-hidden="true" />
+                  ) : theme === 'dark' ? (
+                    <Sun className="h-7 w-7" />
+                  ) : (
+                    <Moon className="h-7 w-7" />
+                  )}
+                </button>
+              </div>
+
+              <div className="relative w-[85px] flex justify-center">
+                <button
+                  onClick={() => { setDrawerOpen(false); handleLogout(); }}
+                  className="flex items-center text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                  title="Se déconnecter"
+                  aria-label="Se déconnecter"
+                >
+                  <LogOut className="h-8 w-8" />
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
     </main>
   );
 }

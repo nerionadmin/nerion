@@ -197,7 +197,7 @@ function isIRIFullyFilled(row: IRIRow | null): boolean {
   if (!row) return false;
   for (let i = 1; i <= 28; i++) {
     const key = `q${i}` as QKey;
-    if ((row as any)[key] == null) return false;
+    if (row[key] == null) return false;
   }
   return true;
 }
@@ -281,7 +281,7 @@ function isPvqFullyFilled(row: PvqRow | null): boolean {
   if (!row) return false;
   for (let i = 1; i <= 40; i++) {
     const key = `q${i}` as QKey;
-    if ((row as any)[key] == null) return false;
+    if (row[key] == null) return false;
   }
   return true;
 }

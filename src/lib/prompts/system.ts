@@ -40,7 +40,7 @@ Intro phase behavior:
   2. Then, on a new line by itself, output exactly the following:
 
 \`\`\`json
-{ "trigger_orchestrato": true }
+{ "trigger_orchestrator": true }
 \`\`\`
 
 - Do not speculate.

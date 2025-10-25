@@ -1,0 +1,176 @@
+/* =========================================================
+   global.css
+   - Nerion UI — Feedback Colors 2025 (Silicon Valley style)
+   - Ajout des tokens complets pour danger / success / warning
+   - Default: DARK (conserve ton rendu actuel)
+   - Light: via .light (compatible next-themes)
+   ========================================================= */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========
+   THEME TOKENS
+   - Default: DARK (garde exactement ton rendu actuel)
+   - Light: activer via la classe .light sur <html> (ou next-themes)
+   ========= */
+
+:root {
+  /* === DARK (défaut) === */
+  /* Nouvelles variables sémantiques (Nerion – Matching Focus) */
+  --bg: #161618; /*#0C0D0F
+  --surface: #17191C;       /* surface-1 */
+  --surface-2: #242628; /*#22252B     /* surface-2 (cards/sections) */
+  --border: #3A3C3E;
+
+  --text: #ECEDEE;
+  --text-muted: #ACACAD; /*#A3A8B0
+
+   /* Hover (Dark) */
+  --hover-surface: #2f2f30; /* fallback simple si color-mix n'est pas supporté */
+  --hover-surface: color-mix(in srgb, var(--surface-2) 95%, white 5%);
+
+  /* CTA neutre (style Grok) + accent réservé aux détails */
+  --primary: #2A2F36;       /* CTA principal (graphite doux) */
+  --primary-hover: #343A3F; /* Hover subtil mais visible */
+  --accent: #8b5cf6;        /* Accent (liens/toggles) */
+  --accent-hover: #a78bfa;
+  --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+  --ring: #4C51BF;
+
+  /* ----------------------------------------------
+     FEEDBACK COLORS (DARK) — tokens complets
+     ---------------------------------------------- */
+  /* Danger (rouge) */
+  --danger-solid:  #FF5A5F;
+  --danger-on-solid: #0B0B0C;    /* texte sur bouton rouge */
+  --danger-hover:  #FF333A; /* contraste plus marqué au survol */
+  --danger-soft:   #2B1416;      /* fond alerte douce */
+  --danger-subtle: #1D0C0E;      /* fond badge discret */
+  --danger-border: #7A2E34;
+  --danger-ring:   #FF9096;      /* focus ring rouge */
+  --danger-text:   #FFB3B7;      /* texte rouge sur surfaces soft */
+
+  /* Success (vert) */
+  --success-solid:  #30D158;
+  --success-on-solid: #0B0B0C;   /* texte noir = contraste top */
+  --success-hover:  #2BC554;
+  --success-soft:   #0F1A14;
+  --success-subtle: #0B1310;
+  --success-border: #2F6E51;
+  --success-ring:   #54F0A3;
+  --success-text:   #A1F3C7;
+
+  /* Warning (orange) */
+  --warning-solid:  #FFB020;
+  --warning-on-solid: #0B0B0C;
+  --warning-hover:  #E79A0E;
+  --warning-soft:   #1A1510;
+  --warning-subtle: #120E0A;
+  --warning-border: #80511E;
+  --warning-ring:   #FFC56F;
+  --warning-text:   #FFDCA3;
+
+  /* === Tes variables "shorthand" existantes (inchangées) ===
+     -> restent telles quelles pour ne RIEN casser.
+     -> Quand tu voudras migrer, tu pourras les rediriger vers *-solid.
+     Exemple de migration :
+       --success: var(--success-solid);
+       --warning: var(--warning-solid);
+       --danger:  var(--danger-solid);
+  */
+  --success: #34D399;
+  --warning: #FBBF24;
+  --danger:  #F87171;
+
+  --image-border: #3A3C3E; /*#2C2F36
+
+  /* === Alias rétro-compatibilité (tes variables existantes) === */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card-bg: var(--surface-2);
+  --placeholder: var(--text-muted);
+}
+
+/* === LIGHT THEME === */
+.light {
+  --bg: #F8F7F6;               /*#F3F3F1
+  --surface: #FFFFFF;           /* surface-1 */
+  --surface-2: #FCFCFC;     /* surface-2 (bars/blocks) */
+  --border: #D3D3D3;
+  --text: #1B1A19; 
+  --text-muted: #8C8C8C; /*#686E76
+
+   /* Hover (Light) */
+  --hover-surface: #ececec; /* fallback simple */
+  --hover-surface: color-mix(in srgb, var(--surface-2) 90%, black 10%);
+
+  /* CTA neutre (cohérent avec Grok) + accent miroir pour les détails */
+  --primary: #1F242B;       /* CTA principal (graphite) */
+  --primary-hover: #2A3038; /* Hover subtil mais visible */
+  --accent: #7c3aed;        /* Accent (liens/toggles) */
+  --accent-hover: #8b5cf6;
+  --accent-gradient: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%);
+  --ring: #C7D2FE;
+
+  /* ----------------------------------------------
+     FEEDBACK COLORS (LIGHT) — tokens complets
+     ---------------------------------------------- */
+  /* Danger (rouge) */
+  --danger-solid:  #C81E1E;
+  --danger-on-solid: #FFFFFF;
+  --danger-hover:  #991111;
+  --danger-soft:   #FFE8E6;
+  --danger-subtle: #FFF4F3;
+  --danger-border: #F4C7C7;
+  --danger-ring:   #FF8088;
+  --danger-text:   #7A271A;
+
+  /* Success (vert) */
+  --success-solid:  #0B7A35;
+  --success-on-solid: #FFFFFF;
+  --success-hover:  #0F6A35;
+  --success-soft:   #EAF7F0;
+  --success-subtle: #F5FBF8;
+  --success-border: #BFE7CE;
+  --success-ring:   #7EE8A6;
+  --success-text:   #0C5B30;
+
+  /* Warning (orange) */
+  --warning-solid:  #B45309;
+  --warning-on-solid: #FFFFFF;
+  --warning-hover:  #9A3F07;
+  --warning-soft:   #FFF3E1;
+  --warning-subtle: #FFFAF0;
+  --warning-border: #F9DFB1;
+  --warning-ring:   #FFD38A;
+  --warning-text:   #8A4B08;
+
+  /* Shorthand historiques (inchangés) */
+  --success: #0A7E61;
+  --warning: #9A6B14;
+  --danger:  #B4232A;
+
+  --image-border: #E3E3E3; /*#D9DEE3
+
+  /* Alias rétro-compat pour tes variables existantes */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card-bg: var(--surface-2);
+  --placeholder: var(--text-muted);
+}
+
+/* =========================================================
+   Base
+   ========================================================= */
+html, body {
+  @apply m-0 p-0 h-full bg-[var(--background)] text-[var(--foreground)] font-sans;
+}
+
+/* Micro-animation existante */
+@keyframes pulse-scale {
+  0%, 100% { transform: scale(0.85); }
+  50%      { transform: scale(1.15); }
+}
+.pulse-scale { animation: pulse-scale 1.5s ease-in-out infinite; }

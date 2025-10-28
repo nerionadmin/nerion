@@ -199,6 +199,11 @@ export default function AutoFaceScanner({
   const chinSinceRef     = useRef<number | null>(null);
   const chinActiveRef    = useRef<boolean>(false);
 
+  /** ===== AJOUT : orientation initiale + dimensions webcam ===== */
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">("landscape");
+  const webcamWidth  = orientation === "portrait" ? 720 : 1280;
+  const webcamHeight = orientation === "portrait" ? 960 : 720;
+
   /** ===== Utils couleurs ===== */
   const getCssVar = (name: string, fallback: string) => {
     if (typeof window === "undefined") return fallback;
@@ -1243,24 +1248,13 @@ export default function AutoFaceScanner({
     };
   }, [mediaReady, ready, syncCanvasToVideo, drawPreloadOverlay]);
 
-  useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
-
-  /** ---------------- AJOUTS ORIENTATION (sans changer le design) ---------------- */
-  const [orientation, setOrientation] = useState<"portrait" | "landscape">("landscape");
-
+  /** AJOUT : détection orientation au 1er rendu */
   useEffect(() => {
-    const detectOrientation = () => {
-      const isPortrait = window.innerHeight > window.innerWidth;
-      setOrientation(isPortrait ? "portrait" : "landscape");
-    };
-    detectOrientation();
-    window.addEventListener("resize", detectOrientation);
-    return () => window.removeEventListener("resize", detectOrientation);
+    const isPortrait = window.innerHeight > window.innerWidth;
+    setOrientation(isPortrait ? "portrait" : "landscape");
   }, []);
 
-  const webcamWidth  = orientation === "portrait" ? 720 : 1280;
-  const webcamHeight = orientation === "portrait" ? 960 : 720;
-  /** ----------------------------------------------------------------------------- */
+  useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
 
   return (
     <div

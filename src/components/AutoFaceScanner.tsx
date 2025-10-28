@@ -1245,6 +1245,23 @@ export default function AutoFaceScanner({
 
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
 
+  /** ---------------- AJOUTS ORIENTATION (sans changer le design) ---------------- */
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">("landscape");
+
+  useEffect(() => {
+    const detectOrientation = () => {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      setOrientation(isPortrait ? "portrait" : "landscape");
+    };
+    detectOrientation();
+    window.addEventListener("resize", detectOrientation);
+    return () => window.removeEventListener("resize", detectOrientation);
+  }, []);
+
+  const webcamWidth  = orientation === "portrait" ? 720 : 1280;
+  const webcamHeight = orientation === "portrait" ? 960 : 720;
+  /** ----------------------------------------------------------------------------- */
+
   return (
     <div
       ref={rootRef}
@@ -1263,8 +1280,8 @@ export default function AutoFaceScanner({
         forceScreenshotSourceSize
         videoConstraints={{
           facingMode: "user",
-          width:  { ideal: IDEAL_W, max: 9999 },
-          height: { ideal: IDEAL_H, max: 9999 },
+          width:  { ideal: webcamWidth,  max: 9999 },
+          height: { ideal: webcamHeight, max: 9999 },
           frameRate: { ideal: 30, max: 60 },
         }}
         className="w-full h-full object-contain"

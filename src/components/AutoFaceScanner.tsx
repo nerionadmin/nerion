@@ -242,7 +242,7 @@ export default function AutoFaceScanner({
     try {
       const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
       const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
-      return mobile ? 2 : 1; // diamètre *1.5 -> rayon *1.5
+      return mobile ? 1.5 : 1; // diamètre *1.5 -> rayon *1.5
     } catch { return 1; }
   };
 

@@ -35,9 +35,9 @@ const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
 const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
 
 const MIN_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 0.65 : 0.60);
-const MAX_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 1.05 : 0.96);
+const MAX_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 1.25 : 0.96);
 const MIN_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 0.65 : 0.60);
-const MAX_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 1.05 : 0.96);
+const MAX_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 1.25 : 0.96);
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;
@@ -568,7 +568,7 @@ cover.style.left = `${left}px`;
 cover.style.top = `${top}px`;
 cover.style.width = `${cssW}px`;
 cover.style.height = `${cssH}px`;
-cover.style.backgroundColor = "#000";
+cover.style.backgroundColor = "var(--bg)";
 
 // masque qui s’arrête exactement au bord intérieur du cercle
 const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole}px, black ${hole + 1}px)`;

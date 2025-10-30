@@ -172,6 +172,25 @@ export default function AutoFaceScanner({
 
   const [ready, setReady] = useState(false);
   const [mediaReady, setMediaReady] = useState(false);
+  // Détection téléphone (mobile) pour appliquer le portrait et l'agrandissement du cercle
+  const [isPhone, setIsPhone] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      try {
+        const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+        const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
+        setIsPhone(!!mobile);
+      } catch { setIsPhone(false); }
+    };
+    check();
+    window.addEventListener("resize", check);
+    window.addEventListener("orientationchange", check);
+    return () => {
+      window.removeEventListener("resize", check);
+      window.removeEventListener("orientationchange", check);
+    };
+  }, []);
+
 
   const capturedOnceRef = useRef(false);
   const stableSinceRef = useRef<number | null>(null);
@@ -211,6 +230,16 @@ export default function AutoFaceScanner({
     const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
     const num = parseInt(full.slice(0, 6), 16);
     return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+  };
+
+  
+  // Agrandit le diamètre du cercle de 50% sur téléphone (rayon * 1.5)
+  const getCircleScale = () => {
+    try {
+      const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+      const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
+      return mobile ? 1.5 : 1; // diamètre *1.5 -> rayon *1.5
+    } catch { return 1; }
   };
 
   const colorFromVar = (varName: string, alpha = 0.95, fallbackHex = "#30D158") => {
@@ -531,7 +560,7 @@ export default function AutoFaceScanner({
       const cx = cssW * 0.5;
       const cy = cssH * 0.5;
       const ringWidth = 3;
-      const r = cssH * OVAL_RY_N;
+      const r = cssH * OVAL_RY_N * getCircleScale();
       const hole = r + ringWidth / 2 + 1;
 
       const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole - 0.5}px, black ${hole}px)`;
@@ -559,7 +588,7 @@ export default function AutoFaceScanner({
       ctx.clearRect(0, 0, W, H);
 
       const cx = W * 0.5, cy = H * 0.5;
-      const r  = H * OVAL_RY_N;
+      const r  = H * OVAL_RY_N * getCircleScale();
       const ringWidth = 3;
 
       // Couleurs
@@ -681,7 +710,7 @@ export default function AutoFaceScanner({
     ctx.clearRect(0, 0, W, H);
 
     const cx = W * 0.5, cy = H * 0.5;
-    const r  = H * OVAL_RY_N;
+    const r  = H * OVAL_RY_N * getCircleScale();
     const ringWidth = 3;
 
     const clipR = Math.max(0, r - (ringWidth + 1));
@@ -1244,6 +1273,21 @@ export default function AutoFaceScanner({
   }, [mediaReady, ready, syncCanvasToVideo, drawPreloadOverlay]);
 
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
+  // Contraintes caméra: portrait sur téléphone, paysage sur ordinateur portable
+  const computedVideoConstraints: MediaTrackConstraints = isPhone
+    ? {
+        facingMode: "user",
+        width:  { ideal: 720,  max: 1280 },
+        height: { ideal: 1280, max: 1920 },
+        frameRate: { ideal: 30, max: 60 },
+      }
+    : {
+        facingMode: "user",
+        width:  { ideal: IDEAL_W, max: 9999 },
+        height: { ideal: IDEAL_H, max: 9999 },
+        frameRate: { ideal: 30, max: 60 },
+      };
+
 
   return (
     <div
@@ -1261,12 +1305,7 @@ export default function AutoFaceScanner({
         screenshotFormat="image/jpeg"
         screenshotQuality={1}
         forceScreenshotSourceSize
-        videoConstraints={{
-          facingMode: "user",
-          width:  { ideal: IDEAL_W, max: 9999 },
-          height: { ideal: IDEAL_H, max: 9999 },
-          frameRate: { ideal: 30, max: 60 },
-        }}
+        videoConstraints={computedVideoConstraints}
         className="w-full h-full object-contain"
       />
 
@@ -1276,7 +1315,7 @@ export default function AutoFaceScanner({
         className="absolute pointer-events-none rounded-2xl"
         style={{
           left: 0, top: 0,
-          backgroundColor: "var(--bg)",
+          backgroundColor: "#000",
           transition: "none",
           willChange: "background-color,-webkit-mask-image,mask-image",
           zIndex: 1

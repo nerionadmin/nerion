@@ -1245,34 +1245,6 @@ export default function AutoFaceScanner({
 
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
 
-  // === AJOUT MINIMAL : détection téléphone + contraintes vidéo dédiées (portrait) ===
-  const IS_PHONE = (() => {
-    if (typeof navigator === "undefined") return false;
-    const ua = navigator.userAgent || "";
-    const isAndroidPhone = /Android/i.test(ua) && !/Tablet/i.test(ua);
-    const isIPhone = /iPhone/i.test(ua);
-    const isWindowsPhone = /Windows Phone/i.test(ua);
-    const isTablet = /iPad|iPadOS|Tablet/i.test(ua);
-    return (isAndroidPhone || isIPhone || isWindowsPhone) && !isTablet;
-  })();
-
-  const computedVideoConstraints = IS_PHONE
-    ? {
-        facingMode: "user",
-        // Portrait par défaut sur téléphone (width < height)
-        width:  { ideal: IDEAL_H, max: 9999 }, // 1080
-        height: { ideal: IDEAL_W, max: 9999 }, // 1920
-        frameRate: { ideal: 30, max: 60 },
-      }
-    : {
-        facingMode: "user",
-        // Inchangé pour desktop / laptop / tablette
-        width:  { ideal: IDEAL_W, max: 9999 }, // 1920
-        height: { ideal: IDEAL_H, max: 9999 }, // 1080
-        frameRate: { ideal: 30, max: 60 },
-      };
-  // === FIN AJOUT MINIMAL ===
-
   return (
     <div
       ref={rootRef}
@@ -1289,7 +1261,12 @@ export default function AutoFaceScanner({
         screenshotFormat="image/jpeg"
         screenshotQuality={1}
         forceScreenshotSourceSize
-        videoConstraints={computedVideoConstraints}
+        videoConstraints={{
+          facingMode: "user",
+          width:  { ideal: IDEAL_W, max: 9999 },
+          height: { ideal: IDEAL_H, max: 9999 },
+          frameRate: { ideal: 30, max: 60 },
+        }}
         className="w-full h-full object-contain"
       />
 

@@ -34,10 +34,10 @@ const OVAL_H_N = OVAL_RY_N * 2;
 const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
 const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
 
-const MIN_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 1.00 : 0.60);
-const MAX_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 1.60 : 0.96);
-const MIN_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 1.00 : 0.60);
-const MAX_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 1.60 : 0.96);
+const MIN_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 0.80 : 0.60);
+const MAX_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 1.40 : 0.96);
+const MIN_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 0.80 : 0.60);
+const MAX_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 1.40 : 0.96);
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;

@@ -30,10 +30,14 @@ const STABLE_HOLD_MS = 900;
 /** Taille visage autorisée (0..1) */
 const OVAL_W_N = OVAL_RX_N * 2;
 const OVAL_H_N = OVAL_RY_N * 2;
-const MIN_FACE_WIDTH_N  = OVAL_W_N * 0.60;
-const MAX_FACE_WIDTH_N  = OVAL_W_N * 0.96;
-const MIN_FACE_HEIGHT_N = OVAL_H_N * 0.60;
-const MAX_FACE_HEIGHT_N = OVAL_H_N * 0.96;
+// Zoom-in plus fort sur mobile (visage doit être plus grand)
+const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
+
+const MIN_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 0.70 : 0.60);
+const MAX_FACE_WIDTH_N  = OVAL_W_N * (mobile ? 1.10 : 0.96);
+const MIN_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 0.70 : 0.60);
+const MAX_FACE_HEIGHT_N = OVAL_H_N * (mobile ? 1.10 : 0.96);
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;
@@ -238,7 +242,7 @@ export default function AutoFaceScanner({
     try {
       const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
       const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || (typeof window !== "undefined" && window.innerWidth <= 768);
-      return mobile ? 1.5 : 1; // diamètre *1.5 -> rayon *1.5
+      return mobile ? 2 : 1; // diamètre *1.5 -> rayon *1.5
     } catch { return 1; }
   };
 
@@ -531,43 +535,48 @@ export default function AutoFaceScanner({
 
   /** Aligner canvas + cover */
   const syncCanvasToVideo = useCallback(() => {
-    const root = rootRef.current, videoEl = videoRef.current, canvas = canvasRef.current, cover = coverRef.current;
-    if (!root || !videoEl || !canvas) return;
+  const root = rootRef.current, videoEl = videoRef.current, canvas = canvasRef.current, cover = coverRef.current;
+  if (!root || !videoEl || !canvas) return;
 
-    const vr = videoEl.getBoundingClientRect(), rr = root.getBoundingClientRect();
-    const cssW = vr.width, cssH = vr.height;
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const left = vr.left - rr.left, top = vr.top - rr.top;
+  const vr = videoEl.getBoundingClientRect(), rr = root.getBoundingClientRect();
+  const cssW = vr.width, cssH = vr.height;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const left = vr.left - rr.left, top = vr.top - rr.top;
 
-    // Canvas
-    canvas.style.left = `${left}px`;
-    canvas.style.top = `${top}px`;
-    canvas.style.width = `${cssW}px`;
-    canvas.style.height = `${cssH}px`;
-    const pxW = Math.round(cssW * dpr), pxH = Math.round(cssH * dpr);
-    if (canvas.width !== pxW) canvas.width = pxW;
-    if (canvas.height !== pxH) canvas.height = pxH;
-    const ctx = canvas.getContext("2d");
-    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Canvas
+  canvas.style.left = `${left}px`;
+  canvas.style.top = `${top}px`;
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  const pxW = Math.round(cssW * dpr), pxH = Math.round(cssH * dpr);
+  if (canvas.width !== pxW) canvas.width = pxW;
+  if (canvas.height !== pxH) canvas.height = pxH;
+  const ctx = canvas.getContext("2d");
+  if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Cover DOM
-    if (cover) {
-      cover.style.left = `${left}px`;
-      cover.style.top = `${top}px`;
-      cover.style.width = `${cssW}px`;
-      cover.style.height = `${cssH}px`;
+  // Cover DOM — fond noir uniquement sur téléphone
+  if (cover) {
+    // Affiche le voile noir sur tous les appareils, sans qu'il rentre dans le cercle
+const cx = cssW * 0.5;
+const cy = cssH * 0.5;
+const ringWidth = 3;
+const r = cssH * OVAL_RY_N * getCircleScale();
+const hole = r - ringWidth / 2;
 
-      const cx = cssW * 0.5;
-      const cy = cssH * 0.5;
-      const ringWidth = 3;
-      const r = cssH * OVAL_RY_N * getCircleScale();
-      const hole = r + ringWidth / 2 + 1;
+// Fond noir appliqué partout (mobile + PC)
+cover.style.left = `${left}px`;
+cover.style.top = `${top}px`;
+cover.style.width = `${cssW}px`;
+cover.style.height = `${cssH}px`;
+cover.style.backgroundColor = "#000";
 
-      const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole - 0.5}px, black ${hole}px)`;
-      (cover.style as any).WebkitMaskImage = mask;
-      (cover.style as any).maskImage = mask;
-    }
-  }, []);
+// masque qui s’arrête exactement au bord intérieur du cercle
+const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole}px, black ${hole + 1}px)`;
+(cover.style as any).WebkitMaskImage = mask;
+(cover.style as any).maskImage = mask;
+
+  }
+}, []);
 
   // -------- Overlay (anneau + grille + texte) — cercle
   const drawOverlay = useCallback(

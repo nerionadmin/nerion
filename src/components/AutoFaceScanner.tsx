@@ -263,19 +263,6 @@ export default function AutoFaceScanner({
     });
   };
 
-  /** 🔁 Détection d’orientation (portrait vs paysage) */
-  const [isPortrait, setIsPortrait] = useState(false);
-  useEffect(() => {
-    const update = () => setIsPortrait(window.innerHeight > window.innerWidth);
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-    };
-  }, []);
-
   /** Scroll doux */
   const scrollIntoViewPolitely = useCallback(() => {
     const doScroll = () => {
@@ -740,35 +727,6 @@ export default function AutoFaceScanner({
     ctx.stroke();
   }, []);
 
-  /** Fallback capture depuis la vidéo (iOS/Safari-safe) */
-  const screenshotFromVideo = async (): Promise<{ dataUrl: string; blob: Blob } | null> => {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth || !v.videoHeight) return null;
-
-    const cw = v.videoWidth;
-    const ch = v.videoHeight;
-    const can = document.createElement("canvas");
-    can.width = cw;
-    can.height = ch;
-    const ctx = can.getContext("2d");
-    if (!ctx) return null;
-
-    if (MIRRORED_VIEW) {
-      ctx.translate(cw, 0);
-      ctx.scale(-1, 1);
-    }
-    ctx.drawImage(v, 0, 0, cw, ch);
-
-    return await new Promise((resolve) => {
-      can.toBlob((blob) => {
-        if (!blob) return resolve(null);
-        const reader = new FileReader();
-        reader.onloadend = () => resolve({ dataUrl: reader.result as string, blob });
-        reader.readAsDataURL(blob);
-      }, "image/jpeg", 1);
-    });
-  };
-
   /** Démarre la détection dès que la vidéo est prête */
   useEffect(() => {
     if (!mediaReady) return;
@@ -1166,20 +1124,10 @@ export default function AutoFaceScanner({
             if (captureOk && hold >= STABLE_HOLD_MS && !capturedOnceRef.current) {
               capturedOnceRef.current = true;
               try {
-                let dataUrl = webcamRef.current?.getScreenshot();
-                let blob: Blob | null = null;
-
+                const dataUrl = webcamRef.current?.getScreenshot();
                 if (dataUrl) {
-                  blob = await fetch(dataUrl).then((r) => r.blob());
-                } else {
-                  const alt = await screenshotFromVideo();
-                  if (alt) { dataUrl = alt.dataUrl; blob = alt.blob; }
-                }
-
-                if (dataUrl && blob) {
+                  const blob = await fetch(dataUrl).then((r) => r.blob());
                   onCapture({ dataUrl, blob });
-                } else {
-                  capturedOnceRef.current = false; // retry possible
                 }
               } catch {
                 capturedOnceRef.current = false; // retry
@@ -1297,26 +1245,11 @@ export default function AutoFaceScanner({
 
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
 
-  // Contraintes vidéo dynamiques (portrait vs paysage)
-  const computedVideoConstraints: MediaTrackConstraints = isPortrait
-    ? {
-        facingMode: "user",
-        width:  { ideal: 720,  max: 1080 },
-        height: { ideal: 1280, max: 1920 },
-        frameRate: { ideal: 30, max: 60 },
-      }
-    : {
-        facingMode: "user",
-        width:  { ideal: IDEAL_W, max: 3840 },
-        height: { ideal: IDEAL_H, max: 2160 },
-        frameRate: { ideal: 30, max: 60 },
-      };
-
   return (
     <div
       ref={rootRef}
-      className="relative w-full max-w-[min(92vw,1280px)]"
-      style={{ aspectRatio: isPortrait ? "3/4" : "4/3" }}
+      className="relative w-full max-w=[min(92vw,1280px)]"
+      style={{ aspectRatio: `${width}/${height}` }}
     >
       {/* Vidéo (miroir pour selfie) */}
       <Webcam
@@ -1328,7 +1261,12 @@ export default function AutoFaceScanner({
         screenshotFormat="image/jpeg"
         screenshotQuality={1}
         forceScreenshotSourceSize
-        videoConstraints={computedVideoConstraints}
+        videoConstraints={{
+          facingMode: "user",
+          width:  { ideal: IDEAL_W, max: 9999 },
+          height: { ideal: IDEAL_H, max: 9999 },
+          frameRate: { ideal: 30, max: 60 },
+        }}
         className="w-full h-full object-contain"
       />
 
@@ -1338,7 +1276,7 @@ export default function AutoFaceScanner({
         className="absolute pointer-events-none rounded-2xl"
         style={{
           left: 0, top: 0,
-          backgroundColor: "#000",
+          backgroundColor: "var(--bg)",
           transition: "none",
           willChange: "background-color,-webkit-mask-image,mask-image",
           zIndex: 1

@@ -1245,9 +1245,8 @@ export default function AutoFaceScannerPortrait({
     aspectRatio: 9 / 16,
     frameRate: { ideal: 30 },
   }}
-  className="w-full h-full object-cover"
+  className="w-full h-full object-contain"
   style={{
-    objectFit: "cover",
     transform: "rotate(0deg)",
     transformOrigin: "center center",
   }}

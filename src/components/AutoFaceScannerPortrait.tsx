@@ -515,11 +515,19 @@ export default function AutoFaceScannerPortrait({
       const hole = r + ringWidth / 2 + 1;
 
       // aligne le trou exactement sur le bord externe de l’anneau, arrondi au pixel device
-      const outerR = r + ringWidth / 2;
-      const holePx = (Math.round(outerR * dpr) + 0.5) / dpr;
+      // Trou du masque parfaitement aligné avec le bord externe du cercle
+const outerR = r + ringWidth / 2;
+const holePx = Math.round(outerR * dpr) / dpr;
 
-      // arête franche (même stop pour transparent et black) + pas de répétition
-      const mask = `radial-gradient(circle ${holePx}px at ${cx}px ${cy}px, transparent ${holePx}px, black ${holePx + 1}px)`;
+// Masque opaque à l’extérieur, sans rentrer dans le cercle
+const mask = `radial-gradient(circle ${holePx}px at ${cx}px ${cy}px, transparent ${holePx}px, black ${holePx + 4}px)`;
+
+// Application du masque sans répétition
+(cover.style as any).WebkitMaskImage = mask;
+(cover.style as any).maskImage = mask;
+(cover.style as any).WebkitMaskRepeat = "no-repeat";
+(cover.style as any).maskRepeat = "no-repeat";
+
      (cover.style as any).WebkitMaskImage = mask;
      (cover.style as any).maskImage = mask;
      (cover.style as any).WebkitMaskRepeat = "no-repeat";

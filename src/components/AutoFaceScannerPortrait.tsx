@@ -30,9 +30,9 @@ const STABLE_HOLD_MS = 900;
 const OVAL_W_N = OVAL_RX_N * 2;
 const OVAL_H_N = OVAL_RY_N * 2;
 const MIN_FACE_WIDTH_N  = OVAL_W_N * 0.60;
-const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.60;
+const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.80;
 const MIN_FACE_HEIGHT_N = OVAL_H_N * 0.60;
-const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.60;
+const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.80;
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;
@@ -510,22 +510,22 @@ if (cover) {
   const cx = cssW * 0.5;
   const cy = cssH * 0.5;
   const ringWidth = 3;
+
+  // Même logique de rayon que le dessin de l’overlay (PORTRAIT = min(W,H))
   const r = Math.min(cssW, cssH) * CIRCLE_R_FRACTION;
 
-  // Rayon externe exact du cercle (pas à l’intérieur)
-  const outerR = r + ringWidth / 2;
-  const holePx = Math.round(outerR * dpr) / dpr;
+  // Bord extérieur du cercle (on ajoute 1px comme en landscape pour éviter le liseré)
+  const hole = r + ringWidth / 2 + 1;
 
-  // Masque net : le noir commence juste à l’extérieur du bord transparent
-  // et couvre toute la zone visible sans déborder ni laisser de bande
+  // Masque "canonique" (identique à la version landscape qui marche)
+  // - intérieur : transparent (trou)
+  // - extérieur : opaque (black), donc le cover noir masque bien la vidéo
   const mask = `radial-gradient(
-    circle ${holePx}px at ${cx}px ${cy}px,
-    transparent ${holePx + 0.2}px,
-    var(--bg) ${holePx + 0.3}px,
-    var(--bg) 100%
+    circle ${hole}px at ${cx}px ${cy}px,
+    transparent ${hole - 0.5}px,
+    black ${hole}px
   )`;
 
-  // Application du masque (sans répétition ni défaut de bord)
   (cover.style as any).WebkitMaskImage = mask;
   (cover.style as any).maskImage = mask;
   (cover.style as any).WebkitMaskRepeat = "no-repeat";
@@ -1240,7 +1240,7 @@ if (cover) {
     </div>
     <div
       ref={rootRef}
-      className="relative w-full max-w-[min(92vw,1280px)]"
+      className="relative w-full max-w-[min(92vw,1280px)] overflow-hidden"
       style={{ aspectRatio: `${width}/${height}` }} // 9:16 par défaut
     >
       {/* Vidéo (miroir pour selfie) */}

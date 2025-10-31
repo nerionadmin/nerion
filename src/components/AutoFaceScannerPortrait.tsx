@@ -1219,6 +1219,10 @@ export default function AutoFaceScannerPortrait({
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
 
   return (
+  <>
+    <div className="text-red-500 text-center text-sm font-semibold mb-2">
+      [PORTRAIT MODE ACTIVÉ]
+    </div>
     <div
       ref={rootRef}
       className="relative w-full max-w=[min(92vw,1280px)]"
@@ -1263,5 +1267,6 @@ export default function AutoFaceScannerPortrait({
         style={{ left: 0, top: 0, zIndex: 2 }}
       />
     </div>
+    </>
   );
 }

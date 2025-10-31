@@ -500,38 +500,45 @@ export default function AutoFaceScannerPortrait({
     if (canvas.height !== pxH) canvas.height = pxH;
     const ctx = canvas.getContext("2d");
     if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-// Cover DOM
+// Cover DOM (snap + surdimension + trou légèrement plus grand)
 if (cover) {
-  cover.style.left = `${left}px`;
-  cover.style.top = `${top}px`;
-  cover.style.width = `${cssW}px`;
-  cover.style.height = `${cssH}px`;
+  // 1) Snap aux pixels + débord de 2 px pour tuer tout liseré sur les bords
+  const leftSnap   = Math.floor(left) - 1;
+  const topSnap    = Math.floor(top) - 1;
+  const widthSnap  = Math.ceil(cssW) + 2;
+  const heightSnap = Math.ceil(cssH) + 2;
 
-  const cx = cssW * 0.5;
-  const cy = cssH * 0.5;
+  cover.style.left   = `${leftSnap}px`;
+  cover.style.top    = `${topSnap}px`;
+  cover.style.width  = `${widthSnap}px`;
+  cover.style.height = `${heightSnap}px`;
+
+  // 2) Géométrie du trou alignée sur le "snap"
+  const cx = widthSnap * 0.5;
+  const cy = heightSnap * 0.5;
   const ringWidth = 3;
+  const r = Math.min(widthSnap, heightSnap) * CIRCLE_R_FRACTION;
 
-  // Même logique de rayon que le dessin de l’overlay (PORTRAIT = min(W,H))
-  const r = Math.min(cssW, cssH) * CIRCLE_R_FRACTION;
+  // Fudge pour écrans haute densité : trou un peu plus grand
+  const HOLE_FUDGE_PX = 2; // ajuste à 3 si besoin
+  const hole = r + ringWidth / 2 + HOLE_FUDGE_PX;
 
-  // Bord extérieur du cercle (on ajoute 1px comme en landscape pour éviter le liseré)
-  const hole = r + ringWidth / 2 + 1;
-
-  // Masque "canonique" (identique à la version landscape qui marche)
-  // - intérieur : transparent (trou)
-  // - extérieur : opaque (black), donc le cover noir masque bien la vidéo
+  // 3) Masque : intérieur 100% transparent, extérieur 100% opaque
   const mask = `radial-gradient(
     circle ${hole}px at ${cx}px ${cy}px,
-    transparent ${hole - 0.5}px,
-    black ${hole}px
+    transparent ${hole}px,
+    rgba(0,0,0,1) ${hole + 0.5}px
   )`;
 
+  // Verrouille le rendu du mask pour éviter tout re-échantillonnage
   (cover.style as any).WebkitMaskImage = mask;
-  (cover.style as any).maskImage = mask;
+  (cover.style as any).maskImage       = mask;
   (cover.style as any).WebkitMaskRepeat = "no-repeat";
-  (cover.style as any).maskRepeat = "no-repeat";
-  (cover.style as any).WebkitMaskSize = "100% 100%";
-  (cover.style as any).maskSize = "100% 100%";
+  (cover.style as any).maskRepeat       = "no-repeat";
+  (cover.style as any).WebkitMaskSize   = "100% 100%";
+  (cover.style as any).maskSize         = "100% 100%";
+  (cover.style as any).WebkitMaskPosition = "0 0";
+  (cover.style as any).maskPosition       = "0 0";
 }
   }, []);
 

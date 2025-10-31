@@ -1,47 +1,48 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// app/components/AutoFaceScannerPortrait.tsx
+// app/components/AutoFaceScanner.tsx
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import Webcam from "react-webcam";
 
 /**
- * Version PORTRAIT du scanner automatique.
- * Différences clés vs AutoFaceScanner (landscape):
- * - Aspect ratio par défaut 540x960 (9:16)
- * - Cercle overlay basé sur min(W,H) (évite les r trop grands en hauteur)
- * - SelfieSegmentation modelSelection: 0 (general) — mieux en portrait
- * - Contraintes vidéo idéales 1080x1920
+ * FaceMesh = UMD LOCAL -> /public/mediapipe/face_mesh/face_mesh.js
+ * Hands    = UMD LOCAL -> /public/mediapipe/hands/hands.js
+ * SelfieSeg= UMD LOCAL -> /public/mediapipe/selfie_segmentation/selfie_segmentation.js
  *
- * ⚠️ Les assets MediaPipe restent en local (UMD) exactement comme dans l’original.
+ * ⚠️ Assure-toi d’avoir copié TOUT le contenu de:
+ * - node_modules/@mediapipe/face_mesh/*             -> public/mediapipe/face_mesh/
+ * - node_modules/@mediapipe/hands/*                 -> public/mediapipe/hands/
+ * - node_modules/@mediapipe/selfie_segmentation/*   -> public/mediapipe/selfie_segmentation/
+ * (inclure .js/.wasm/.data/.tflite)
  */
 const MP_FM_VER = "0.4.1633559619";
 
-/** UX & règles — on garde les mêmes pour conserver le même “ressenti” */
+/** UX & règles */
 const MIRRORED_VIEW = true;
-// Ellipse de centrage (même rigidité pour éviter de retuner toutes les bornes)
-const OVAL_RX_N = 0.23;
-const OVAL_RY_N = 0.35;
+// Overlay en CERCLE :
+const OVAL_RX_N = 0.18;
+const OVAL_RY_N = 0.28;
 const CENTER_STRICTNESS = 0.90;
 
 const STABLE_HOLD_MS = 900;
 
-/** Taille visage autorisée (0..1) — dérivées de l’ellipse */
+/** Taille visage autorisée (0..1) */
 const OVAL_W_N = OVAL_RX_N * 2;
 const OVAL_H_N = OVAL_RY_N * 2;
 const MIN_FACE_WIDTH_N  = OVAL_W_N * 0.60;
-const MAX_FACE_WIDTH_N  = OVAL_W_N * 2.00;
+const MAX_FACE_WIDTH_N  = OVAL_W_N * 0.96;
 const MIN_FACE_HEIGHT_N = OVAL_H_N * 0.60;
-const MAX_FACE_HEIGHT_N = OVAL_H_N * 2.00;
+const MAX_FACE_HEIGHT_N = OVAL_H_N * 0.96;
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;
 
-/** Caméra — portrait par défaut */
-const IDEAL_W = 1080; // portrait width ~1080
-const IDEAL_H = 1920; // portrait height ~1920
+/** Caméra */
+const IDEAL_W = 1920;
+const IDEAL_H = 1080;
 
-/** Occlusion profondeur — inchangé */
+/** Occlusion profondeur */
 const OCCL_INNER_RX = 0.22;
 const OCCL_INNER_RY = 0.32;
 const OCCL_OUTER_RX = 0.52;
@@ -58,48 +59,62 @@ const SELFIE_ASSETS_BASE = "/mediapipe/selfie_segmentation";
 /** router d’assets */
 const locateMediaPipeFile = (file: string) => {
   const f = file.split("/").pop() || file;
+
+  // SelfieSegmentation
   if (
     f.includes("selfie_segmentation") ||
     f.startsWith("selfie_") ||
     f === "selfie_segmentation.binarypb"
-  ) return `${SELFIE_ASSETS_BASE}/${f}`;
+  ) {
+    return `${SELFIE_ASSETS_BASE}/${f}`;
+  }
+
+  // FaceMesh
   if (
     f.includes("face_mesh") ||
     f.includes("face_landmark") ||
     f === "face_mesh.binarypb"
-  ) return `${FACE_ASSETS_BASE}/${f}`;
+  ) {
+    return `${FACE_ASSETS_BASE}/${f}`;
+  }
+
+  // Hands
   if (
     f.includes("hands") ||
     f.includes("palm_detection") ||
     f.includes("hand_landmark") ||
     f === "hands.binarypb"
-  ) return `${HANDS_ASSETS_BASE}/${f}`;
+  ) {
+    return `${HANDS_ASSETS_BASE}/${f}`;
+  }
+
   return `${FACE_ASSETS_BASE}/${f}`;
 };
 
 /** Gate humain via SelfieSegmentation (global) */
-const HUMAN_RATIO_MIN = 0.55;
+const HUMAN_RATIO_MIN = 0.55; // (durci de 0.40 -> 0.55)
 const MASK_SAMPLE_W   = 64;
 
-/** Veto objet sur bas du visage */
-const LOWER_FACE_HUMAN_MIN = 0.60;
-const LOWER_ROI_RX = 0.30;
-const LOWER_ROI_RY = 0.18;
-const LOWER_ROI_CY = 0.72;
-const SKIN_SAMPLE_W = 64;
-const SKIN_RATIO_MIN = 0.30;
-const OBJECT_HOLD_MS = 160;
+/** -------- AJOUT : veto objet non-humain sur bas du visage -------- */
+const LOWER_FACE_HUMAN_MIN = 0.60; // seuil humain attendu dans l’ellipse bas du visage (nez/bouche)
+const LOWER_ROI_RX = 0.30;         // rayon X de l’ellipse (en fraction de la largeur bbox)
+const LOWER_ROI_RY = 0.18;         // rayon Y de l’ellipse (en fraction de la hauteur bbox)
+const LOWER_ROI_CY = 0.72;         // position verticale du centre du ROI (72% vers le bas de la bbox)
+const SKIN_SAMPLE_W = 64;          // échantillonnage vidéo pour test “peau”
+const SKIN_RATIO_MIN = 0.30;       // au moins 30% de peau dans l’ellipse (sinon on suspecte un objet)
+const OBJECT_HOLD_MS = 160;        // temporisation anti-flicker pour l'état "objet"
 
-/** Bandes haut/bas (SelfieSeg) */
-const BAND_LOWER_FACE_MIN = 0.72;
-const BAND_UPPER_FACE_MIN = 0.65;
-const BAND_LOWER_START = 0.58;
+/** --- AJOUT : contrôle par bandes (haut/bas) dans la bbox (via SelfieSeg) --- */
+const BAND_LOWER_FACE_MIN = 0.72;  // humain mini dans la bande basse
+const BAND_UPPER_FACE_MIN = 0.65;  // humain mini dans la bande haute (front/yeux)
+const BAND_LOWER_START = 0.58;     // 58% -> 100% de la bbox (bouche/menton)
 const BAND_LOWER_END   = 1.00;
-const BAND_UPPER_START = 0.08;
+const BAND_UPPER_START = 0.08;     // 8% -> 45% de la bbox (front/yeux)
 const BAND_UPPER_END   = 0.45;
-const BAND_CENTER_X_PAD = 0.16;
+const BAND_CENTER_X_PAD = 0.16;    // ignore ~16% de chaque joue (zone centrale)
+/** ------------------------------------------------------------------ */
 
-/** ROIs supplémentaires */
+/** --- AJOUT : ROIs supplémentaires (nez, bouche, joues, front, menton) --- */
 type RoiSpec = { cx: number; cy: number; rx: number; ry: number; humanMin: number; skinMin: number };
 const ROI_SPECS: Record<"nose"|"mouth"|"cheekL"|"cheekR"|"forehead"|"chin", RoiSpec> = {
   nose:     { cx: 0.50, cy: 0.56, rx: 0.22, ry: 0.14, humanMin: 0.88, skinMin: 0.60 },
@@ -109,9 +124,7 @@ const ROI_SPECS: Record<"nose"|"mouth"|"cheekL"|"cheekR"|"forehead"|"chin", RoiS
   forehead: { cx: 0.50, cy: 0.24, rx: 0.32, ry: 0.20, humanMin: 0.88, skinMin: 0.60 },
   chin:     { cx: 0.50, cy: 0.94, rx: 0.26, ry: 0.14, humanMin: 0.88, skinMin: 0.60 },
 };
-
-/** --- PORTRAIT: cercle overlay basé sur la plus petite dimension --- */
-const CIRCLE_R_FRACTION = OVAL_RY_N; // garde la “taille visuelle” cohérente
+/** ------------------------------------------------------------------ */
 
 type Props = {
   onCapture: (payload: { dataUrl: string; blob: Blob }) => void;
@@ -122,10 +135,10 @@ type Props = {
   cooldownMs?: number;
 };
 
-export default function AutoFaceScannerPortrait({
+export default function AutoFaceScanner({
   onCapture,
-  width = 540,      // --- PORTRAIT defaults (9:16)
-  height = 960,
+  width = 720,
+  height = 540,
   centerTolerance = { x: 0.18, y: 0.22 },
   eyeOpenThreshold = 0.22,
 }: Props) {
@@ -133,9 +146,11 @@ export default function AutoFaceScannerPortrait({
   const webcamRef = useRef<Webcam>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Overlay DOM (fond de page qui masque tout sauf le cercle)
   const coverRef = useRef<HTMLDivElement | null>(null);
 
-  // === Refs stables ===
+  // === Refs stables pour les résultats ===
   const faceMeshRef = useRef<any | null>(null);
   const handsRef    = useRef<any | null>(null);
   const selfieRef   = useRef<any | null>(null);
@@ -148,6 +163,7 @@ export default function AutoFaceScannerPortrait({
   const offscreenMaskRef   = useRef<HTMLCanvasElement | null>(null);
   const lastHumanRatioRef  = useRef<number>(1);
 
+  // AJOUT : offscreen pour lire la frame vidéo et tester la “peau”
   const offscreenVideoRef  = useRef<HTMLCanvasElement | null>(null);
 
   const rafIdRef = useRef<number | null>(null);
@@ -160,16 +176,16 @@ export default function AutoFaceScannerPortrait({
   const capturedOnceRef = useRef(false);
   const stableSinceRef = useRef<number | null>(null);
 
-  // Blink
+  // Clignement
   const awaitingBlinkRef = useRef(false);
   const wasEyesOpenRef   = useRef(false);
   const blinkTriggeredRef = useRef(false);
 
-  // Veto bas visage
+  // AJOUT : temporisation pour l'état "objet masque le bas du visage"
   const lowerObjSinceRef = useRef<number | null>(null);
   const lowerObjActiveRef = useRef<boolean>(false);
 
-  // ROIs extra
+  // AJOUT : temporisations/états ROI supplémentaires
   const noseSinceRef     = useRef<number | null>(null);
   const noseActiveRef    = useRef<boolean>(false);
   const mouthSinceRef    = useRef<number | null>(null);
@@ -210,7 +226,7 @@ export default function AutoFaceScannerPortrait({
     return raw;
   };
 
-  /** Charger script UMD 1x */
+  /** Charger un script (UMD) une seule fois */
   const loadScriptOnce = (src: string, id: string) =>
     new Promise<void>((resolve, reject) => {
       const existed = document.getElementById(id) as HTMLScriptElement | null;
@@ -230,7 +246,7 @@ export default function AutoFaceScannerPortrait({
       document.head.appendChild(s);
     });
 
-  /** Safari: ensure video ready */
+  /** S’assure que la vidéo est prête (Safari veut un play() explicite) */
   const ensureVideoReady = async (video: HTMLVideoElement) => {
     try { await video.play().catch(() => undefined); } catch {}
     if (video.readyState >= 2 && video.videoWidth && video.videoHeight) return;
@@ -275,7 +291,7 @@ export default function AutoFaceScannerPortrait({
     return leftEAR > eyeOpenThreshold && rightEAR > eyeOpenThreshold;
   };
 
-  /** BBox normalisée */
+  /** BBox normalisée (après miroir X si besoin) */
   const bboxFromLandmarks = (lm: any[]) => {
     let minX = 1, minY = 1, maxX = 0, maxY = 0;
     for (let i = 0; i < lm.length; i++) {
@@ -292,13 +308,13 @@ export default function AutoFaceScannerPortrait({
     return { xMin: minX, yMin: minY, widthN: maxX - minX, heightN: maxY - minY, xCenter, yCenter };
   };
 
-  /** Point dans ovale */
+  /** Point dans le cercle */
   const isPointInsideOval = (x: number, y: number, rx: number, ry: number) => {
     const dx = x - 0.5, dy = y - 0.5;
     return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1;
   };
 
-  /** Face mostly inside */
+  /** Visage “majoritairement” à l’intérieur */
   const faceMostlyInsideOval = (landmarks: any[], ratio = INSIDE_RATIO): boolean => {
     if (!landmarks || !Array.isArray(landmarks) || landmarks.length === 0) return false;
     const rx = OVAL_RX_N * CENTER_STRICTNESS, ry = OVAL_RY_N * CENTER_STRICTNESS;
@@ -312,7 +328,7 @@ export default function AutoFaceScannerPortrait({
     return inside / landmarks.length >= ratio;
   };
 
-  /** Ratios humain — global */
+  /** Ratio "humain" global (SelfieSeg) */
   const computeHumanRatio = useCallback((maskEl: CanvasImageSource, videoCssW: number, videoCssH: number) => {
     if (!offscreenMaskRef.current) offscreenMaskRef.current = document.createElement("canvas");
     const off = offscreenMaskRef.current!;
@@ -343,7 +359,7 @@ export default function AutoFaceScannerPortrait({
     return insideHuman / insideTotal;
   }, []);
 
-  /** Ratio humain dans ellipse ROI */
+  /** AJOUT : ratio "humain" dans une ellipse ROI (coords normalisées 0..1) */
   const computeHumanRatioInEllipse = useCallback((
     maskEl: CanvasImageSource,
     videoCssW: number, videoCssH: number,
@@ -379,7 +395,7 @@ export default function AutoFaceScannerPortrait({
     return tot ? human / tot : 0;
   }, []);
 
-  /** Test “peau” dans ROI (frame vidéo) */
+  /** AJOUT : test “peau” dans une ellipse ROI, à partir de la frame vidéo */
   const computeSkinRatioInEllipseFromVideo = useCallback((
     videoEl: HTMLVideoElement,
     videoCssW: number, videoCssH: number,
@@ -400,6 +416,7 @@ export default function AutoFaceScannerPortrait({
     const data = ctx.getImageData(0, 0, targetW, targetH).data;
 
     const isSkin = (r: number, g: number, b: number) => {
+      // Règles simples RGB + YCbCr
       const maxc = Math.max(r,g,b), minc = Math.min(r,g,b);
       const condRGB = (r > 95 && g > 40 && b > 20 && (maxc - minc) > 15 && Math.abs(r - g) > 15 && r > g && r > b);
       const Cb = (-0.168736*r - 0.331264*g + 0.5*b + 128);
@@ -425,7 +442,7 @@ export default function AutoFaceScannerPortrait({
     return tot ? skin / tot : 0;
   }, []);
 
-  /** Bande humain (upper|lower) */
+  /** AJOUT : ratio "humain" dans une bande (upper|lower) de la bbox (via SelfieSeg) */
   const computeBandHumanRatio = useCallback((
     maskEl: CanvasImageSource,
     videoCssW: number,
@@ -465,10 +482,13 @@ export default function AutoFaceScannerPortrait({
     for (let py = 0; py < targetH; py++) {
       const ny = (py + 0.5) / targetH;
       if (ny < yStartBand || ny > yEndBand) continue;
+
       for (let px = 0; px < targetW; px++) {
         const nx = (px + 0.5) / targetW;
         if (nx < xMinBand || nx > xMaxBand) continue;
+
         if (!isPointInsideOval(nx, ny, OVAL_RX_N, OVAL_RY_N)) continue;
+
         const i = (py * targetW + px) * 4;
         const r = data[i];
         insideTotal++;
@@ -480,7 +500,7 @@ export default function AutoFaceScannerPortrait({
     return insideHuman / insideTotal;
   }, []);
 
-  /** Aligner canvas + cover (PORTRAIT: cercle via min(W,H)) */
+  /** Aligner canvas + cover */
   const syncCanvasToVideo = useCallback(() => {
     const root = rootRef.current, videoEl = videoRef.current, canvas = canvasRef.current, cover = coverRef.current;
     if (!root || !videoEl || !canvas) return;
@@ -500,49 +520,27 @@ export default function AutoFaceScannerPortrait({
     if (canvas.height !== pxH) canvas.height = pxH;
     const ctx = canvas.getContext("2d");
     if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-// Cover DOM (snap + surdimension + trou légèrement plus grand)
-if (cover) {
-  // 1) Snap aux pixels + débord de 2 px pour tuer tout liseré sur les bords
-  const leftSnap   = Math.floor(left) - 1;
-  const topSnap    = Math.floor(top) - 1;
-  const widthSnap  = Math.ceil(cssW) + 2;
-  const heightSnap = Math.ceil(cssH) + 2;
 
-  cover.style.left   = `${leftSnap}px`;
-  cover.style.top    = `${topSnap}px`;
-  cover.style.width  = `${widthSnap}px`;
-  cover.style.height = `${heightSnap}px`;
+    // Cover DOM
+    if (cover) {
+      cover.style.left = `${left}px`;
+      cover.style.top = `${top}px`;
+      cover.style.width = `${cssW}px`;
+      cover.style.height = `${cssH}px`;
 
-  // 2) Géométrie du trou alignée sur le "snap"
-  const cx = widthSnap * 0.5;
-  const cy = heightSnap * 0.5;
-  const ringWidth = 3;
-  const r = Math.min(widthSnap, heightSnap) * CIRCLE_R_FRACTION;
+      const cx = cssW * 0.5;
+      const cy = cssH * 0.5;
+      const ringWidth = 3;
+      const r = cssH * OVAL_RY_N;
+      const hole = r + ringWidth / 2 + 1;
 
-  // Fudge pour écrans haute densité : trou un peu plus grand
-  const HOLE_FUDGE_PX = 2; // ajuste à 3 si besoin
-  const hole = r + ringWidth / 2 + HOLE_FUDGE_PX;
-
-  // 3) Masque : intérieur 100% transparent, extérieur 100% opaque
-  const mask = `radial-gradient(
-    circle ${hole}px at ${cx}px ${cy}px,
-    transparent ${hole}px,
-    rgba(0,0,0,1) ${hole + 0.5}px
-  )`;
-
-  // Verrouille le rendu du mask pour éviter tout re-échantillonnage
-  (cover.style as any).WebkitMaskImage = mask;
-  (cover.style as any).maskImage       = mask;
-  (cover.style as any).WebkitMaskRepeat = "no-repeat";
-  (cover.style as any).maskRepeat       = "no-repeat";
-  (cover.style as any).WebkitMaskSize   = "100% 100%";
-  (cover.style as any).maskSize         = "100% 100%";
-  (cover.style as any).WebkitMaskPosition = "0 0";
-  (cover.style as any).maskPosition       = "0 0";
-}
+      const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole - 0.5}px, black ${hole}px)`;
+      (cover.style as any).WebkitMaskImage = mask;
+      (cover.style as any).maskImage = mask;
+    }
   }, []);
 
-  // -------- Overlay (anneau + grille + texte) — cercle via min(W,H)
+  // -------- Overlay (anneau + grille + texte) — cercle
   const drawOverlay = useCallback(
     (
       ctx: CanvasRenderingContext2D,
@@ -561,7 +559,7 @@ if (cover) {
       ctx.clearRect(0, 0, W, H);
 
       const cx = W * 0.5, cy = H * 0.5;
-      const r  = Math.min(W, H) * CIRCLE_R_FRACTION; // <<< PORTRAIT-safe
+      const r  = H * OVAL_RY_N;
       const ringWidth = 3;
 
       // Couleurs
@@ -656,7 +654,7 @@ if (cover) {
       }
 
       // Texte d’état
-      ctx.font = `${Math.max(18, Math.round(W * 0.038))}px system-ui, -apple-system, Segoe UI, Roboto`;
+      ctx.font = `${Math.max(14, Math.round(W * 0.028))}px system-ui, -apple-system, Segoe UI, Roboto`;
       ctx.fillStyle = ringColor;
       ctx.textAlign = "center";
       ctx.fillText(statusText, cx, Math.min(H - 8, cy + r + 36));
@@ -664,7 +662,7 @@ if (cover) {
     []
   );
 
-  /** Helpers occlusion profondeur */
+  /** --- helpers occlusion profondeur --- */
   const median = (arr: number[]) => {
     if (!arr.length) return 0;
     const s = arr.slice().sort((a, b) => a - b);
@@ -678,12 +676,12 @@ if (cover) {
     return dx * dx + dy * dy <= 1;
   };
 
-  /** Overlay de pré-chargement (gris) — cercle via min(W,H) */
+  /** Overlay de pré-chargement (gris) */
   const drawPreloadOverlay = useCallback((ctx: CanvasRenderingContext2D, W: number, H: number) => {
     ctx.clearRect(0, 0, W, H);
 
     const cx = W * 0.5, cy = H * 0.5;
-    const r  = Math.min(W, H) * CIRCLE_R_FRACTION;
+    const r  = H * OVAL_RY_N;
     const ringWidth = 3;
 
     const clipR = Math.max(0, r - (ringWidth + 1));
@@ -729,7 +727,7 @@ if (cover) {
     ctx.stroke();
   }, []);
 
-  /** Démarrage détection */
+  /** Démarre la détection dès que la vidéo est prête */
   useEffect(() => {
     if (!mediaReady) return;
 
@@ -751,7 +749,7 @@ if (cover) {
         const ns = g.FaceMesh || g.faceMesh || (g as any).mpFaceMesh || (g as any).mpface_mesh || {};
         const FaceMeshCtor = ns.FaceMesh ?? ns;
         if (typeof FaceMeshCtor !== "function") {
-          console.error("[AutoFaceScannerPortrait] FaceMesh ctor introuvable", ns);
+          console.error("[AutoFaceScanner] FaceMesh ctor introuvable", ns);
           return;
         }
         const fm: any = new FaceMeshCtor({ locateFile: locateMediaPipeFile });
@@ -763,7 +761,10 @@ if (cover) {
           selfieMode: true,
         });
         faceMeshRef.current = fm;
-        fm.onResults((res: any) => { lastFaceLmRef.current = res?.multiFaceLandmarks || null; });
+
+        fm.onResults((res: any) => {
+          lastFaceLmRef.current = res?.multiFaceLandmarks || null;
+        });
 
         // Hands
         await loadScriptOnce(`${HANDS_ASSETS_BASE}/hands.js`, "mp-hands");
@@ -771,7 +772,7 @@ if (cover) {
         const HandsNS = gh.Hands || gh.hands || gh.mpHands || (gh as any).mp_hands || {};
         const HandsCtor = HandsNS.Hands ?? HandsNS;
         if (typeof HandsCtor !== "function") {
-          console.error("[AutoFaceScannerPortrait] Hands ctor introuvable", HandsNS);
+          console.error("[AutoFaceScanner] Hands ctor introuvable", HandsNS);
         } else {
           const hands: any = new HandsCtor({ locateFile: locateMediaPipeFile });
           hands.setOptions({
@@ -782,20 +783,22 @@ if (cover) {
             minTrackingConfidence: 0.70,
           });
           handsRef.current = hands;
-          hands.onResults((res: any) => { lastHandsLmRef.current = res?.multiHandLandmarks || null; });
+          hands.onResults((res: any) => {
+            lastHandsLmRef.current = res?.multiHandLandmarks || null;
+          });
         }
 
-        // Selfie Segmentation (PORTRAIT: modèle 0 — general)
+        // Selfie Segmentation
         await loadScriptOnce(`${SELFIE_ASSETS_BASE}/selfie_segmentation.js`, "mp-selfieseg");
         const gs: any = globalThis as any;
         const SSNS = gs.SelfieSegmentation || gs.selfieSegmentation || gs.mpSelfieSegmentation || (gs as any).mp_selfie_segmentation || {};
         const SelfieSegmentationCtor = SSNS.SelfieSegmentation ?? SSNS;
         if (typeof SelfieSegmentationCtor !== "function") {
-          console.error("[AutoFaceScannerPortrait] SelfieSegmentation ctor introuvable", SSNS);
+          console.error("[AutoFaceScanner] SelfieSegmentation ctor introuvable", SSNS);
         } else {
           const ss: any = new SelfieSegmentationCtor({ locateFile: locateMediaPipeFile });
           ss.setOptions({
-            modelSelection: 0, // <<< portrait friendly
+            modelSelection: 1, // 0: general, 1: landscape
             selfieMode: true
           });
           selfieRef.current = ss;
@@ -821,312 +824,314 @@ if (cover) {
           }
 
           const ctx = canvas?.getContext("2d");
-          if (!ctx || !canvas) return;
+          if (ctx && canvas) {
+            const W = canvas.clientWidth, H = canvas.clientHeight;
 
-          const W = canvas.clientWidth, H = canvas.clientHeight;
-
-          // Ratios humains (global)
-          if (lastSegMaskRef.current) {
-            const rAll = computeHumanRatio(lastSegMaskRef.current as CanvasImageSource, W, H);
-            lastHumanRatioRef.current = rAll;
-          }
-          const humanOk = !segReadyRef.current || lastHumanRatioRef.current >= HUMAN_RATIO_MIN;
-
-          let drawBBox: { x: number; y: number; width: number; height: number } | undefined;
-          let exactlyOneFace = false, faceInsideOval = false, eyesOk = false, sizeOk = false, landmarksOk = false;
-          let tooSmall = false, tooLarge = false;
-
-          let occludedByDepth = false;
-          let handInFace = false;
-
-          // veto objet bas du visage (final, après temporisation)
-          let lowerFaceBlockedByObject = false;
-
-          // ROIs extra
-          let noseBlocked = false, mouthBlocked = false, cheekLBlocked = false, cheekRBlocked = false, foreheadBlocked = false, chinBlocked = false;
-
-          let faceBoxN:
-            | { xCenter: number; yCenter: number; widthN: number; heightN: number }
-            | undefined;
-
-          const lastFace = lastFaceLmRef.current;
-
-          if (lastFace && lastFace.length > 0) {
-            exactlyOneFace = lastFace.length === 1;
-            const lm = lastFace[0];
-
-            landmarksOk = Array.isArray(lm) && lm.length >= 468;
-
-            const bb = bboxFromLandmarks(lm);
-            faceBoxN = bb;
-            drawBBox = { x: bb.xMin * W, y: bb.yMin * H, width: bb.widthN * W, height: bb.heightN * H };
-
-            faceInsideOval = faceMostlyInsideOval(lm, INSIDE_RATIO);
-            sizeOk = (bb.widthN >= MIN_FACE_WIDTH_N && bb.widthN <= MAX_FACE_WIDTH_N &&
-                      bb.heightN >= MIN_FACE_HEIGHT_N && bb.heightN <= MAX_FACE_HEIGHT_N);
-            tooSmall = bb.widthN < MIN_FACE_WIDTH_N || bb.heightN < MIN_FACE_HEIGHT_N;
-            tooLarge = bb.widthN > MAX_FACE_WIDTH_N || bb.heightN > MAX_FACE_HEIGHT_N;
-
-            eyesOk = eyesOpen(lm);
-
-            // Occlusion profondeur (global)
-            if (landmarksOk) {
-              const cx = MIRRORED_VIEW ? 1 - bb.xCenter : bb.xCenter;
-              const cy = bb.yCenter;
-
-              const rxIn  = bb.widthN  * OCCL_INNER_RX;
-              const ryIn  = bb.heightN * OCCL_INNER_RY;
-              const rxOut = bb.widthN  * OCCL_OUTER_RX;
-              const ryOut = bb.heightN * OCCL_OUTER_RY;
-
-              const zCenter: number[] = [];
-              const zRing: number[] = [];
-
-              for (let i = 0; i < lm.length; i++) {
-                const raw = lm[i];
-                const x = MIRRORED_VIEW ? 1 - raw.x : raw.x;
-                const y = raw.y;
-                const z = raw.z ?? 0;
-
-                const inInner = pointInEllipse(x, y, cx, cy, rxIn, ryIn);
-                const inOuter = pointInEllipse(x, y, cx, cy, rxOut, ryOut);
-
-                if (inInner) zCenter.push(z);
-                else if (inOuter) zRing.push(z);
-              }
-
-              if (zCenter.length >= 20 && zRing.length >= 30) {
-                const medC = median(zCenter);
-                const medR = median(zRing);
-                const dz = Math.abs(medC - medR);
-
-                let support = 0;
-                for (let k = 0; k < zCenter.length; k++) {
-                  if (Math.abs(zCenter[k] - medR) > OCCL_Z_DELTA_THRESH) support++;
-                }
-                const supportRatio = support / zCenter.length;
-
-                occludedByDepth = dz > OCCL_Z_DELTA_THRESH && supportRatio >= OCCL_SUPPORT_RATIO;
-              }
+            // Ratios humains (global)
+            if (lastSegMaskRef.current) {
+              const rAll = computeHumanRatio(lastSegMaskRef.current as CanvasImageSource, W, H);
+              lastHumanRatioRef.current = rAll;
             }
+            const humanOk = !segReadyRef.current || lastHumanRatioRef.current >= HUMAN_RATIO_MIN;
 
-            // Main dans la BBox du visage
-            const handLmList = lastHandsLmRef.current;
-            if (landmarksOk && handLmList && handLmList.length > 0) {
-              const xMin = bb.xMin;
-              const xMax = bb.xMin + bb.widthN;
-              const yMin = bb.yMin;
-              const yMax = bb.yMin + bb.heightN;
+            let drawBBox: { x: number; y: number; width: number; height: number } | undefined;
+            let exactlyOneFace = false, faceInsideOval = false, eyesOk = false, sizeOk = false, landmarksOk = false;
+            let tooSmall = false, tooLarge = false;
 
-              outer: for (let h = 0; h < handLmList.length; h++) {
-                const hand = handLmList[h];
-                for (let j = 0; j < hand.length; j++) {
-                  const raw = hand[j];
+            let occludedByDepth = false;
+            let handInFace = false;
+
+            // veto objet bas du visage (final, après temporisation)
+            let lowerFaceBlockedByObject = false;
+
+            // AJOUT : autres ROIs
+            let noseBlocked = false, mouthBlocked = false, cheekLBlocked = false, cheekRBlocked = false, foreheadBlocked = false, chinBlocked = false;
+
+            let faceBoxN:
+              | { xCenter: number; yCenter: number; widthN: number; heightN: number }
+              | undefined;
+
+            const lastFace = lastFaceLmRef.current;
+
+            if (lastFace && lastFace.length > 0) {
+              exactlyOneFace = lastFace.length === 1;
+              const lm = lastFace[0];
+
+              landmarksOk = Array.isArray(lm) && lm.length >= 468;
+
+              const bb = bboxFromLandmarks(lm);
+              faceBoxN = bb;
+              drawBBox = { x: bb.xMin * W, y: bb.yMin * H, width: bb.widthN * W, height: bb.heightN * H };
+
+              faceInsideOval = faceMostlyInsideOval(lm, INSIDE_RATIO);
+              sizeOk = (bb.widthN >= MIN_FACE_WIDTH_N && bb.widthN <= MAX_FACE_WIDTH_N &&
+                        bb.heightN >= MIN_FACE_HEIGHT_N && bb.heightN <= MAX_FACE_HEIGHT_N);
+              tooSmall = bb.widthN < MIN_FACE_WIDTH_N || bb.heightN < MIN_FACE_HEIGHT_N;
+              tooLarge = bb.widthN > MAX_FACE_WIDTH_N || bb.heightN > MAX_FACE_HEIGHT_N;
+
+              eyesOk = eyesOpen(lm);
+
+              // Occlusion profondeur (global)
+              if (landmarksOk) {
+                const cx = MIRRORED_VIEW ? 1 - bb.xCenter : bb.xCenter;
+                const cy = bb.yCenter;
+
+                const rxIn  = bb.widthN  * OCCL_INNER_RX;
+                const ryIn  = bb.heightN * OCCL_INNER_RY;
+                const rxOut = bb.widthN  * OCCL_OUTER_RX;
+                const ryOut = bb.heightN * OCCL_OUTER_RY;
+
+                const zCenter: number[] = [];
+                const zRing: number[] = [];
+
+                for (let i = 0; i < lm.length; i++) {
+                  const raw = lm[i];
                   const x = MIRRORED_VIEW ? 1 - raw.x : raw.x;
                   const y = raw.y;
-                  if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
-                    handInFace = true;
-                    break outer;
+                  const z = raw.z ?? 0;
+
+                  const inInner = pointInEllipse(x, y, cx, cy, rxIn, ryIn);
+                  const inOuter = pointInEllipse(x, y, cx, cy, rxOut, ryOut);
+
+                  if (inInner) zCenter.push(z);
+                  else if (inOuter) zRing.push(z);
+                }
+
+                if (zCenter.length >= 20 && zRing.length >= 30) {
+                  const medC = median(zCenter);
+                  const medR = median(zRing);
+                  const dz = Math.abs(medC - medR);
+
+                  let support = 0;
+                  for (let k = 0; k < zCenter.length; k++) {
+                    if (Math.abs(zCenter[k] - medR) > OCCL_Z_DELTA_THRESH) support++;
+                  }
+                  const supportRatio = support / zCenter.length;
+
+                  occludedByDepth = dz > OCCL_Z_DELTA_THRESH && supportRatio >= OCCL_SUPPORT_RATIO;
+                }
+              }
+
+              // Main dans la BBox du visage
+              const handLmList = lastHandsLmRef.current;
+              if (landmarksOk && handLmList && handLmList.length > 0) {
+                const xMin = bb.xMin;
+                const xMax = bb.xMin + bb.widthN;
+                const yMin = bb.yMin;
+                const yMax = bb.yMin + bb.heightN;
+
+                outer: for (let h = 0; h < handLmList.length; h++) {
+                  const hand = handLmList[h];
+                  for (let j = 0; j < hand.length; j++) {
+                    const raw = hand[j];
+                    const x = MIRRORED_VIEW ? 1 - raw.x : raw.x;
+                    const y = raw.y;
+                    if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+                      handInFace = true;
+                      break outer;
+                    }
                   }
                 }
               }
-            }
 
-            // Veto objet bas du visage
-            let candidateLower = false;
-            let candidateBand  = false;
+              // ----- AJOUT : Veto objet sur bas du visage (logique existante) -----
+              let candidateLower = false; // ROI ellipse + peau
+              let candidateBand  = false; // bandes SelfieSeg (haut/bas)
 
-            if (segReadyRef.current && lastSegMaskRef.current) {
-              // ellipse centrée sur le bas de la bbox visage
-              const cxN = bb.xCenter;
-              const cyN = bb.yMin + bb.heightN * LOWER_ROI_CY;
-              const rxN = bb.widthN  * LOWER_ROI_RX;
-              const ryN = bb.heightN * LOWER_ROI_RY;
+              if (segReadyRef.current && lastSegMaskRef.current) {
+                // ellipse centrée sur le bas de la bbox visage
+                const cxN = bb.xCenter;
+                const cyN = bb.yMin + bb.heightN * LOWER_ROI_CY;
+                const rxN = bb.widthN  * LOWER_ROI_RX;
+                const ryN = bb.heightN * LOWER_ROI_RY;
 
-              // 1) segmentation humaine locale
-              const lowerHuman = computeHumanRatioInEllipse(
-                lastSegMaskRef.current as CanvasImageSource, W, H, cxN, cyN, rxN, ryN
-              );
-
-              // 2) peau locale (frame vidéo)
-              const lowerSkin = videoRef.current
-                ? computeSkinRatioInEllipseFromVideo(videoRef.current, W, H, cxN, cyN, rxN, ryN)
-                : 0;
-
-              candidateLower = (lowerHuman < LOWER_FACE_HUMAN_MIN) || (lowerSkin < SKIN_RATIO_MIN);
-
-              // 3) bandes haut/bas
-              const lowerBand = computeBandHumanRatio(
-                lastSegMaskRef.current as CanvasImageSource, W, H, bb, "lower"
-              );
-              const upperBand = computeBandHumanRatio(
-                lastSegMaskRef.current as CanvasImageSource, W, H, bb, "upper"
-              );
-              candidateBand = (upperBand >= BAND_UPPER_FACE_MIN) && (lowerBand < BAND_LOWER_FACE_MIN);
-            }
-
-            // Temporisation objet
-            const nowT = performance.now();
-            if (candidateLower || candidateBand) {
-              if (lowerObjSinceRef.current === null) lowerObjSinceRef.current = nowT;
-              if (nowT - (lowerObjSinceRef.current || 0) >= OBJECT_HOLD_MS) {
-                lowerObjActiveRef.current = true;
-              }
-            } else {
-              lowerObjSinceRef.current = null;
-              lowerObjActiveRef.current = false;
-            }
-
-            lowerFaceBlockedByObject = lowerObjActiveRef.current;
-
-            // ROIs supplémentaires
-            if (segReadyRef.current && lastSegMaskRef.current) {
-              const checkROI = (
-                spec: RoiSpec,
-                sinceRef: React.MutableRefObject<number | null>,
-                activeRef: React.MutableRefObject<boolean>
-              ): boolean => {
-                const cxN = bb.xMin + bb.widthN  * spec.cx;
-                const cyN = bb.yMin + bb.heightN * spec.cy;
-                const rxN = bb.widthN  * spec.rx;
-                const ryN = bb.heightN * spec.ry;
-
-                const human = computeHumanRatioInEllipse(
+                // 1) segmentation humaine locale
+                const lowerHuman = computeHumanRatioInEllipse(
                   lastSegMaskRef.current as CanvasImageSource, W, H, cxN, cyN, rxN, ryN
                 );
-                const skin = videoRef.current
+
+                // 2) peau locale (frame vidéo)
+                const lowerSkin = videoRef.current
                   ? computeSkinRatioInEllipseFromVideo(videoRef.current, W, H, cxN, cyN, rxN, ryN)
                   : 0;
 
-                const candidate = (human < spec.humanMin) || (skin < spec.skinMin);
-                const t = performance.now();
+                candidateLower = (lowerHuman < LOWER_FACE_HUMAN_MIN) || (lowerSkin < SKIN_RATIO_MIN);
 
-                if (candidate) {
-                  if (sinceRef.current === null) sinceRef.current = t;
-                  if (t - (sinceRef.current || 0) >= OBJECT_HOLD_MS) activeRef.current = true;
-                } else {
-                  sinceRef.current = null;
-                  activeRef.current = false;
-                }
-                return activeRef.current;
-              };
-
-              noseBlocked     = checkROI(ROI_SPECS.nose,     noseSinceRef,     noseActiveRef);
-              mouthBlocked    = checkROI(ROI_SPECS.mouth,    mouthSinceRef,    mouthActiveRef);
-              cheekLBlocked   = checkROI(ROI_SPECS.cheekL,   cheekLSinceRef,   cheekLActiveRef);
-              cheekRBlocked   = checkROI(ROI_SPECS.cheekR,   cheekRSinceRef,   cheekRActiveRef);
-              foreheadBlocked = checkROI(ROI_SPECS.forehead, foreheadSinceRef, foreheadActiveRef);
-              chinBlocked     = checkROI(ROI_SPECS.chin,     chinSinceRef,     chinActiveRef);
-            }
-          }
-
-          const anyRegionBlocked =
-            lowerFaceBlockedByObject || noseBlocked || mouthBlocked || cheekLBlocked || cheekRBlocked || foreheadBlocked || chinBlocked;
-
-          // Logique blink
-          const baseOk =
-            (lastFaceLmRef.current && lastFaceLmRef.current.length === 1) &&
-            landmarksOk &&
-            faceInsideOval &&
-            sizeOk &&
-            !occludedByDepth &&
-            !handInFace &&
-            humanOk &&
-            !anyRegionBlocked;
-
-          if (baseOk && eyesOk && !blinkTriggeredRef.current && !awaitingBlinkRef.current) {
-            awaitingBlinkRef.current = true;
-            wasEyesOpenRef.current = true;
-          }
-
-          if (awaitingBlinkRef.current) {
-            if (!eyesOk && wasEyesOpenRef.current) {
-              wasEyesOpenRef.current = false; // ouverts -> fermés
-            } else if (eyesOk && !wasEyesOpenRef.current) {
-              blinkTriggeredRef.current = true; // fermés -> ouverts
-              awaitingBlinkRef.current = false;
-            }
-          }
-
-          if (!baseOk) {
-            awaitingBlinkRef.current = false;
-            blinkTriggeredRef.current = false;
-            wasEyesOpenRef.current = false;
-            stableSinceRef.current = null;
-          }
-
-          if (blinkTriggeredRef.current && !eyesOk) {
-            blinkTriggeredRef.current = false;
-            stableSinceRef.current = null;
-          }
-
-          const overlayOk =
-            (lastFaceLmRef.current && lastFaceLmRef.current.length === 1) &&
-            landmarksOk &&
-            faceInsideOval &&
-            sizeOk &&
-            !occludedByDepth &&
-            !handInFace &&
-            humanOk &&
-            !anyRegionBlocked &&
-            (eyesOk || awaitingBlinkRef.current);
-
-          const captureOk =
-            !capturedOnceRef.current && baseOk && blinkTriggeredRef.current && eyesOk;
-
-          const now = performance.now();
-          if (captureOk) {
-            if (stableSinceRef.current === null) stableSinceRef.current = now;
-          } else {
-            stableSinceRef.current = null;
-          }
-          const hold = stableSinceRef.current ? now - stableSinceRef.current : 0;
-          const progress = captureOk ? Math.max(0, Math.min(1, hold / STABLE_HOLD_MS)) : 0;
-
-          // Texte d’état
-          let statusText = "Parfait!";
-          if (!lastFace || lastFace.length === 0) statusText = "Aucun visage détecté";
-          else if (!humanOk) statusText = "Personne non détectée";
-          else if (!exactlyOneFace) statusText = "1 seul visage requis";
-          else if (tooSmall) statusText = "Approche-toi un peu";
-          else if (tooLarge) statusText = "Recule un peu";
-          else if (!faceInsideOval) statusText = "Entre bien dans le cercle";
-          else if (handInFace) statusText = "Visage masqué par une main";
-          else if (mouthBlocked) statusText = "Objet masque la bouche";
-          else if (noseBlocked) statusText = "Objet masque le nez";
-          else if (cheekLBlocked) statusText = "Objet masque la joue gauche";
-          else if (cheekRBlocked) statusText = "Objet masque la joue droite";
-          else if (foreheadBlocked) statusText = "Objet masque le front";
-          else if (chinBlocked) statusText = "Objet masque le menton";
-          else if (lowerFaceBlockedByObject) statusText = "Objet masque le bas du visage";
-          else if (occludedByDepth) statusText = "Visage partiellement masqué";
-          else if (!eyesOk) statusText = "Ouvre les yeux";
-          else if (!landmarksOk) statusText = "Visage partiellement couvert";
-
-          // Rendu overlay
-          drawOverlay(ctx, W, H, {
-            bboxPx: drawBBox,
-            ok: !!overlayOk,
-            progress,
-            statusText,
-            faceN: faceBoxN
-          });
-          if (!markedMpReadyRef.current) {
-            markedMpReadyRef.current = true;
-            setReady(true);
-          }
-
-          // Capture (après stabilité + clignement)
-          if (captureOk && hold >= STABLE_HOLD_MS && !capturedOnceRef.current) {
-            capturedOnceRef.current = true;
-            try {
-              const dataUrl = webcamRef.current?.getScreenshot();
-              if (dataUrl) {
-                const blob = await fetch(dataUrl).then((r) => r.blob());
-                onCapture({ dataUrl, blob });
+                // 3) bandes haut/bas (renforce la décision)
+                const lowerBand = computeBandHumanRatio(
+                  lastSegMaskRef.current as CanvasImageSource, W, H, bb, "lower"
+                );
+                const upperBand = computeBandHumanRatio(
+                  lastSegMaskRef.current as CanvasImageSource, W, H, bb, "upper"
+                );
+                candidateBand = (upperBand >= BAND_UPPER_FACE_MIN) && (lowerBand < BAND_LOWER_FACE_MIN);
               }
-            } catch {
-              capturedOnceRef.current = false; // retry
+
+              // Temporisation (anti-flicker) : l'objet doit durer OBJECT_HOLD_MS
+              const nowT = performance.now();
+              if (candidateLower || candidateBand) {
+                if (lowerObjSinceRef.current === null) lowerObjSinceRef.current = nowT;
+                if (nowT - (lowerObjSinceRef.current || 0) >= OBJECT_HOLD_MS) {
+                  lowerObjActiveRef.current = true;
+                }
+              } else {
+                lowerObjSinceRef.current = null;
+                lowerObjActiveRef.current = false;
+              }
+
+              lowerFaceBlockedByObject = lowerObjActiveRef.current;
+              // ----- fin AJOUT (logique existante) -----
+
+              // ----- AJOUT : ROIs supplémentaires (nez, bouche, joues, front, menton) -----
+              if (segReadyRef.current && lastSegMaskRef.current) {
+                const checkROI = (
+                  spec: RoiSpec,
+                  sinceRef: React.MutableRefObject<number | null>,
+                  activeRef: React.MutableRefObject<boolean>
+                ): boolean => {
+                  const cxN = bb.xMin + bb.widthN  * spec.cx;
+                  const cyN = bb.yMin + bb.heightN * spec.cy;
+                  const rxN = bb.widthN  * spec.rx;
+                  const ryN = bb.heightN * spec.ry;
+
+                  const human = computeHumanRatioInEllipse(
+                    lastSegMaskRef.current as CanvasImageSource, W, H, cxN, cyN, rxN, ryN
+                  );
+                  const skin = videoRef.current
+                    ? computeSkinRatioInEllipseFromVideo(videoRef.current, W, H, cxN, cyN, rxN, ryN)
+                    : 0;
+
+                  const candidate = (human < spec.humanMin) || (skin < spec.skinMin);
+                  const t = performance.now();
+
+                  if (candidate) {
+                    if (sinceRef.current === null) sinceRef.current = t;
+                    if (t - (sinceRef.current || 0) >= OBJECT_HOLD_MS) activeRef.current = true;
+                  } else {
+                    sinceRef.current = null;
+                    activeRef.current = false;
+                  }
+                  return activeRef.current;
+                };
+
+                noseBlocked     = checkROI(ROI_SPECS.nose,     noseSinceRef,     noseActiveRef);
+                mouthBlocked    = checkROI(ROI_SPECS.mouth,    mouthSinceRef,    mouthActiveRef);
+                cheekLBlocked   = checkROI(ROI_SPECS.cheekL,   cheekLSinceRef,   cheekLActiveRef);
+                cheekRBlocked   = checkROI(ROI_SPECS.cheekR,   cheekRSinceRef,   cheekRActiveRef);
+                foreheadBlocked = checkROI(ROI_SPECS.forehead, foreheadSinceRef, foreheadActiveRef);
+                chinBlocked     = checkROI(ROI_SPECS.chin,     chinSinceRef,     chinActiveRef);
+              }
+              // ----- fin AJOUT ROIs -----
+            }
+
+            const anyRegionBlocked =
+              lowerFaceBlockedByObject || noseBlocked || mouthBlocked || cheekLBlocked || cheekRBlocked || foreheadBlocked || chinBlocked;
+
+            // Logique clignement
+            const baseOk =
+              exactlyOneFace &&
+              landmarksOk &&
+              faceInsideOval &&
+              sizeOk &&
+              !occludedByDepth &&
+              !handInFace &&
+              humanOk &&
+              !anyRegionBlocked;
+
+            if (baseOk && eyesOk && !blinkTriggeredRef.current && !awaitingBlinkRef.current) {
+              awaitingBlinkRef.current = true;
+              wasEyesOpenRef.current = true;
+            }
+
+            if (awaitingBlinkRef.current) {
+              if (!eyesOk && wasEyesOpenRef.current) {
+                wasEyesOpenRef.current = false; // ouverts -> fermés
+              } else if (eyesOk && !wasEyesOpenRef.current) {
+                blinkTriggeredRef.current = true; // fermés -> ouverts
+                awaitingBlinkRef.current = false;
+              }
+            }
+
+            if (!baseOk) {
+              awaitingBlinkRef.current = false;
+              blinkTriggeredRef.current = false;
+              wasEyesOpenRef.current = false;
+              stableSinceRef.current = null;
+            }
+
+            if (blinkTriggeredRef.current && !eyesOk) {
+              blinkTriggeredRef.current = false;
+              stableSinceRef.current = null;
+            }
+
+            const overlayOk =
+              exactlyOneFace &&
+              landmarksOk &&
+              faceInsideOval &&
+              sizeOk &&
+              !occludedByDepth &&
+              !handInFace &&
+              humanOk &&
+              !anyRegionBlocked &&
+              (eyesOk || awaitingBlinkRef.current);
+
+            const captureOk =
+              !capturedOnceRef.current && baseOk && blinkTriggeredRef.current && eyesOk;
+
+            const now = performance.now();
+            if (captureOk) {
+              if (stableSinceRef.current === null) stableSinceRef.current = now;
+            } else {
+              stableSinceRef.current = null;
+            }
+            const hold = stableSinceRef.current ? now - stableSinceRef.current : 0;
+            const progress = captureOk ? Math.max(0, Math.min(1, hold / STABLE_HOLD_MS)) : 0;
+
+            // Texte d’état (ordre de priorité clair)
+            let statusText = "Parfait!";
+            if (!lastFace || lastFace.length === 0) statusText = "Aucun visage détecté";
+            else if (!humanOk) statusText = "Personne non détectée";
+            else if (!exactlyOneFace) statusText = "1 seul visage requis";
+            else if (tooSmall) statusText = "Approche-toi un peu";
+            else if (tooLarge) statusText = "Recule un peu";
+            else if (!faceInsideOval) statusText = "Entre bien dans le cercle";
+            else if (handInFace) statusText = "Visage masqué par une main";
+            else if (mouthBlocked) statusText = "Objet masque la bouche";
+            else if (noseBlocked) statusText = "Objet masque le nez";
+            else if (cheekLBlocked) statusText = "Objet masque la joue gauche";
+            else if (cheekRBlocked) statusText = "Objet masque la joue droite";
+            else if (foreheadBlocked) statusText = "Objet masque le front";
+            else if (chinBlocked) statusText = "Objet masque le menton";
+            else if (lowerFaceBlockedByObject) statusText = "Objet masque le bas du visage";
+            else if (occludedByDepth) statusText = "Visage partiellement masqué";
+            else if (!eyesOk) statusText = "Ouvre les yeux";
+            else if (!landmarksOk) statusText = "Visage partiellement couvert";
+
+            // Rendu overlay
+            drawOverlay(ctx, W, H, {
+              bboxPx: drawBBox,
+              ok: overlayOk,
+              progress,
+              statusText,
+              faceN: faceBoxN
+            });
+            if (!markedMpReadyRef.current) {
+              markedMpReadyRef.current = true;
+              setReady(true);
+            }
+
+            // Capture (après stabilité + clignement)
+            if (captureOk && hold >= STABLE_HOLD_MS && !capturedOnceRef.current) {
+              capturedOnceRef.current = true;
+              try {
+                const dataUrl = webcamRef.current?.getScreenshot();
+                if (dataUrl) {
+                  const blob = await fetch(dataUrl).then((r) => r.blob());
+                  onCapture({ dataUrl, blob });
+                }
+              } catch {
+                capturedOnceRef.current = false; // retry
+              }
             }
           }
         };
@@ -1141,7 +1146,7 @@ if (cover) {
         if (useRVFC) (videoEl as any).requestVideoFrameCallback(rvfcPump);
         else rafIdRef.current = requestAnimationFrame(rafPump);
       } catch (err) {
-        console.error("[AutoFaceScannerPortrait] init error:", err);
+        console.error("[AutoFaceScanner] init error:", err);
       }
     })();
 
@@ -1201,7 +1206,7 @@ if (cover) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaReady, width, height, eyeOpenThreshold, drawOverlay, syncCanvasToVideo, scrollIntoViewPolitely, onCapture, computeHumanRatio, computeHumanRatioInEllipse, computeSkinRatioInEllipseFromVideo, computeBandHumanRatio]);
 
-  /** Overlay de PRÉ-CHARGEMENT */
+  /** Overlay de PRÉ-CHARGEMENT (jusqu’au 1er rendu MediaPipe) */
   useEffect(() => {
     const canvas = canvasRef.current;
     const videoEl = (webcamRef.current?.video as HTMLVideoElement) || null;
@@ -1241,43 +1246,34 @@ if (cover) {
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
 
   return (
-  <>
-    <div className="text-red-500 text-center text-sm font-semibold mb-2">
-      [PORTRAIT MODE ACTIVÉ]
-    </div>
     <div
       ref={rootRef}
-      className="relative w-full max-w-[min(92vw,1280px)] overflow-hidden"
-      style={{ aspectRatio: `${width}/${height}` }} // 9:16 par défaut
+      className="relative w-full max-w=[min(92vw,1280px)]"
+      style={{ aspectRatio: `${width}/${height}` }}
     >
       {/* Vidéo (miroir pour selfie) */}
       <Webcam
-  ref={webcamRef}
-  audio={false}
-  mirrored={MIRRORED_VIEW}
-  onUserMedia={() => setMediaReady(true)}
-  onUserMediaError={() => setMediaReady(false)}
-  screenshotFormat="image/jpeg"
-  screenshotQuality={1}
-  forceScreenshotSourceSize
-  videoConstraints={{
-    facingMode: "user",
-    width: { ideal: 720 },
-    height: { ideal: 1280 },
-    aspectRatio: 9 / 16,
-    frameRate: { ideal: 30 },
-  }}
-  className="w-full h-full object-contain"
-  style={{
-    transform: "rotate(0deg)",
-    transformOrigin: "center center",
-  }}
-/>
+        ref={webcamRef}
+        audio={false}
+        mirrored={MIRRORED_VIEW}
+        onUserMedia={() => setMediaReady(true)}
+        onUserMediaError={() => setMediaReady(false)}
+        screenshotFormat="image/jpeg"
+        screenshotQuality={1}
+        forceScreenshotSourceSize
+        videoConstraints={{
+          facingMode: "user",
+          width:  { ideal: IDEAL_W, max: 9999 },
+          height: { ideal: IDEAL_H, max: 9999 },
+          frameRate: { ideal: 30, max: 60 },
+        }}
+        className="w-full h-full object-contain"
+      />
 
       {/* Cover DOM : masque tout sauf le cercle */}
       <div
         ref={coverRef}
-        className="absolute pointer-events-none"
+        className="absolute pointer-events-none rounded-2xl"
         style={{
           left: 0, top: 0,
           backgroundColor: "var(--bg)",
@@ -1290,10 +1286,9 @@ if (cover) {
       {/* Canvas au-dessus */}
       <canvas
         ref={canvasRef}
-        className="absolute pointer-events-none"
+        className="absolute pointer-events-none rounded-2xl"
         style={{ left: 0, top: 0, zIndex: 2 }}
       />
     </div>
-    </>
   );
 }

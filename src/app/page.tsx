@@ -2476,7 +2476,7 @@ useEffect(() => {
                 : 'bg-[color-mix(in srgb, var(--surface-2) 85%, white 15%)] text-[var(--text-muted)] cursor-not-allowed',
             ].join(' ')}
           >
-            Continue
+            Next
           </button>
         </>
       )}
@@ -2519,7 +2519,7 @@ useEffect(() => {
               onClick={() => goToStep(1)}
               className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
             >
-              Preview
+              Back
             </button>
 
             <button
@@ -2558,7 +2558,7 @@ useEffect(() => {
                   : 'bg-[color-mix(in srgb, var(--surface-2) 85%, white 15%)] text-[var(--text-muted)] cursor-not-allowed',
               ].join(' ')}
             >
-              Continue
+              Next
             </button>
           </div>
         </>
@@ -2626,7 +2626,7 @@ useEffect(() => {
               onClick={() => goToStep(2)}
               className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
             >
-              Preview
+              Back
             </button>
             <button
               disabled={!hasAgeRange}
@@ -2659,7 +2659,7 @@ useEffect(() => {
                   : 'bg-[color-mix(in srgb, var(--surface-2) 85%, white 15%)] text-[var(--text-muted)] cursor-not-allowed',
               ].join(' ')}
             >
-              Continue
+              Next
             </button>
           </div>
         </>
@@ -2780,7 +2780,7 @@ useEffect(() => {
               onClick={() => goToStep(3)}
               className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
             >
-              Preview
+              Back
             </button>
             <button
               disabled={!geoEnabled}
@@ -2819,7 +2819,7 @@ useEffect(() => {
                   : 'bg-[color-mix(in srgb, var(--surface-2) 85%, white 15%)] text-[var(--text-muted)] cursor-not-allowed',
               ].join(' ')}
             >
-              Continue
+              Next
             </button>
           </div>
         </>
@@ -2880,7 +2880,7 @@ useEffect(() => {
               onClick={() => goToStep(4)}
               className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
             >
-              Preview
+              Back
             </button>
             <button
               disabled={!relationshipType}
@@ -2911,7 +2911,7 @@ useEffect(() => {
                   : 'bg-[color-mix(in srgb, var(--surface-2) 85%, white 15%)] text-[var(--text-muted)] cursor-not-allowed',
               ].join(' ')}
             >
-              Continue
+              Next
             </button>
           </div>
         </>
@@ -2939,7 +2939,7 @@ useEffect(() => {
               onClick={() => goToStep(5)}
               className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
             >
-              Preview
+              Back
             </button>
             <button
               onClick={() => {
@@ -3053,7 +3053,7 @@ useEffect(() => {
         onClick={() => goToStep(6)}
         className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
       >
-        Preview
+        Back
       </button>
     </div>
   </>
@@ -3074,7 +3074,7 @@ useEffect(() => {
                   onClick={() => goToStep(8)}
                   className="mt-2 px-6 py-2 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-medium"
                 >
-                  Continue
+                  Next
                 </button>
               </div>
             )}
@@ -3228,7 +3228,7 @@ useEffect(() => {
                 : 'bg-[color-mix(in srgb, var(--surface-2) 85%, white 15%)] text-[var(--text-muted)] cursor-not-allowed',
             ].join(' ')}
           >
-            Continue
+            Next
           </button>
         </div>
       )}
@@ -3397,7 +3397,7 @@ useEffect(() => {
               onClick={() => goToStep(8)}
               className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
             >
-              Preview
+              Back
             </button>
             <button
               disabled={!allPrefConfirmed}

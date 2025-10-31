@@ -18,7 +18,17 @@ import { Sun,
 import { Range, getTrackBackground } from 'react-range';
 import Logo from '@/components/Logo';
 import FaceScanVisual from '@/components/FaceScanVisual';
-import AutoFaceScanner from '@/components/AutoFaceScanner';
+// --- Nouveaux imports pour les deux scanners ---
+import dynamic from 'next/dynamic';
+
+const AutoFaceScannerLandscape = dynamic(
+  () => import('@/components/AutoFaceScanner'),
+  { ssr: false }
+);
+const AutoFaceScannerPortrait = dynamic(
+  () => import('@/components/AutoFaceScannerPortrait'),
+  { ssr: false }
+);
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10; // +10
 type RelationshipChoice = 'serious' | 'open' | 'casual';
@@ -65,6 +75,23 @@ export default function OnboardingFlowTest() {
 
   // Status du flux de scan (étape 7)
   const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
+  // --- Orientation de l’écran ---
+const [isPortrait, setIsPortrait] = useState<boolean | null>(null);
+
+useEffect(() => {
+  const mq = window.matchMedia('(orientation: portrait)');
+  const update = () => setIsPortrait(mq.matches);
+  update();
+
+  mq.addEventListener?.('change', update);
+  (mq as any).addListener?.(update); // fallback anciens navigateurs
+
+  return () => {
+    mq.removeEventListener?.('change', update);
+    (mq as any).removeListener?.(update);
+  };
+}, []);
+
   const [currentPhotoId, setCurrentPhotoId] = useState<string | null>(null);
 
   // -------- Settings modal (step 10 only) --------
@@ -2932,93 +2959,105 @@ useEffect(() => {
         <>
           <div className="w-full max-w-3xl mx-auto">
             {scanStatus === 'idle' && (
-              <>
-                <AutoFaceScanner
-                  onCapture={async ({ blob }) => {
-                    try {
-                      setScanStatus('pending');
-                      const {
-                        data: { session },
-                      } = await supabase.auth.getSession();
-                      const user = session?.user;
-                      if (!user) {
-                        setScanStatus('timeout');
-                        return;
-                      }
+  <>
+    {isPortrait == null ? (
+      <div className="w-full flex items-center justify-center py-8 opacity-70">
+        Initializing camera…
+      </div>
+    ) : isPortrait ? (
+      <AutoFaceScannerPortrait
+        onCapture={async ({ blob }) => {
+          try {
+            setScanStatus('pending');
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) { setScanStatus('timeout'); return; }
 
-                      // 1) Créer la ligne d'abord (status pending, path provisoire)
-                      const { data: inserted, error: insertError } = await supabase
-                        .from('photos')
-                        .insert({
-                          user_id: user.id,
-                          photo: 'scan',
-                          path: 'pending',
-                          vectorized: false,
-                          status: 'pending',
-                        })
-                        .select('id')
-                        .single();
+            const { data: inserted, error: insertError } = await supabase
+              .from('photos')
+              .insert({ user_id: user.id, photo: 'scan', path: 'pending', vectorized: false, status: 'pending' })
+              .select('id')
+              .single();
+            if (insertError || !inserted?.id) { setScanStatus('timeout'); return; }
 
-                      if (insertError || !inserted?.id) {
-                        console.error('Erreur insertion DB:', insertError);
-                        setScanStatus('timeout');
-                        return;
-                      }
+            const photoId = inserted.id;
+            setCurrentPhotoId(photoId);
 
-                      const photoId = inserted.id;
+            const path = `${photoId}.jpg`;
+            const { error: uploadError } = await supabase.storage
+              .from('photo_scan')
+              .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
 
-                      // 👉 Abonne-toi le plus tôt possible pour ne rater aucun UPDATE
-                      setCurrentPhotoId(photoId);
+            if (uploadError) {
+              await supabase.from('photos').delete().eq('id', photoId);
+              setScanStatus('timeout');
+              return;
+            }
 
-                      const path = `${photoId}.jpg`;
+            const { error: updateErr } = await supabase
+              .from('photos')
+              .update({ path })
+              .eq('id', photoId);
 
-                      // 2) Uploader le fichier sous ce chemin
-                      const { error: uploadError } = await supabase.storage
-                        .from('photo_scan')
-                        .upload(path, blob, {
-                          contentType: 'image/jpeg',
-                          upsert: false,
-                        });
+            if (updateErr) { setScanStatus('timeout'); return; }
+          } catch {
+            setScanStatus('timeout');
+          }
+        }}
+      />
+    ) : (
+      <AutoFaceScannerLandscape
+        onCapture={async ({ blob }) => {
+          try {
+            setScanStatus('pending');
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) { setScanStatus('timeout'); return; }
 
-                      if (uploadError) {
-                        console.error('Erreur upload Supabase:', uploadError.message);
-                        // Nettoyage : on supprime la ligne si l'upload échoue (évite les lignes fantômes)
-                        await supabase.from('photos').delete().eq('id', photoId);
-                        setScanStatus('timeout');
-                        return;
-                      }
+            const { data: inserted, error: insertError } = await supabase
+              .from('photos')
+              .insert({ user_id: user.id, photo: 'scan', path: 'pending', vectorized: false, status: 'pending' })
+              .select('id')
+              .single();
+            if (insertError || !inserted?.id) { setScanStatus('timeout'); return; }
 
-                      // 3) Mettre à jour la ligne avec le path final
-                      const { error: updateErr } = await supabase
-                        .from('photos')
-                        .update({ path })
-                        .eq('id', photoId);
+            const photoId = inserted.id;
+            setCurrentPhotoId(photoId);
 
-                      if (updateErr) {
-                        console.error('Erreur update path:', updateErr);
-                        setScanStatus('timeout');
-                        return;
-                      }
+            const path = `${photoId}.jpg`;
+            const { error: uploadError } = await supabase.storage
+              .from('photo_scan')
+              .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
 
-                      // À partir d’ici, le backend peut vectoriser / confirmer et
-                      // le listener Realtime ou le polling mettra l’UI à jour.
-                    } catch (err) {
-                      console.error('Erreur envoi direct Supabase:', err);
-                      setScanStatus('timeout');
-                    }
-                  }}
-                />
+            if (uploadError) {
+              await supabase.from('photos').delete().eq('id', photoId);
+              setScanStatus('timeout');
+              return;
+            }
 
-                <div className="mt-8 flex justify-start gap-4 w-full max-w-3xl">
-                  <button
-                    onClick={() => goToStep(6)}
-                    className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
-                  >
-                    Preview
-                  </button>
-                </div>
-              </>
-            )}
+            const { error: updateErr } = await supabase
+              .from('photos')
+              .update({ path })
+              .eq('id', photoId);
+
+            if (updateErr) { setScanStatus('timeout'); return; }
+          } catch {
+            setScanStatus('timeout');
+          }
+        }}
+      />
+    )}
+
+    <div className="mt-8 flex justify-start gap-4 w-full max-w-3xl">
+      <button
+        onClick={() => goToStep(6)}
+        className="w-1/2 h-12 rounded-xl border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-surface)] font-medium transition"
+      >
+        Preview
+      </button>
+    </div>
+  </>
+)}
 
             {scanStatus === 'pending' && (
               <div className="flex flex-col items-center gap-4 text-[var(--accent)]">

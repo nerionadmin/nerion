@@ -130,6 +130,29 @@ const ROI_SPECS: Record<"nose"|"mouth"|"cheekL"|"cheekR"|"forehead"|"chin", RoiS
 };
 /** ------------------------------------------------------------------ */
 
+/** --- AJOUT utils orientation / geometry --- */
+const isPortrait = () =>
+  typeof window !== "undefined"
+    ? (window.matchMedia?.("(orientation: portrait)")?.matches ??
+       window.innerHeight >= window.innerWidth)
+    : false;
+
+const getDisplayedVideoRect = (
+  videoEl: HTMLVideoElement,
+  containerW: number,
+  containerH: number
+) => {
+  const vw = Math.max(1, videoEl.videoWidth || 1280);
+  const vh = Math.max(1, videoEl.videoHeight || 720);
+  // object-contain comme le preview
+  const scale = Math.min(containerW / vw, containerH / vh);
+  const drawW = vw * scale, drawH = vh * scale;
+  const offsetX = (containerW - drawW) / 2;
+  const offsetY = (containerH - drawH) / 2;
+  return { vw, vh, drawW, drawH, offsetX, offsetY, scale };
+};
+/** ------------------------------------------------------------------ */
+
 type Props = {
   onCapture: (payload: { dataUrl: string; blob: Blob }) => void;
   width?: number;
@@ -195,6 +218,34 @@ export default function AutoFaceScanner({
     };
   }, []);
 
+  // AJOUT : reconfigurer dynamiquement le track selon l’orientation
+  useEffect(() => {
+    if (!mediaReady) return;
+    const apply = async () => {
+      try {
+        const stream: MediaStream | undefined = (webcamRef.current as any)?.stream;
+        const track = stream?.getVideoTracks?.()[0];
+        if (!track) return;
+        const wantPortrait = isPhone && isPortrait();
+        await track.applyConstraints({
+          aspectRatio: wantPortrait ? 9 / 16 : 16 / 9,
+          width:  { ideal: wantPortrait ? 720  : IDEAL_W },
+          height: { ideal: wantPortrait ? 1280 : IDEAL_H },
+        } as MediaTrackConstraints);
+      } catch {
+        // pas grave si refusé par le device
+      }
+    };
+    apply();
+    const mql = window.matchMedia?.("(orientation: portrait)");
+    const handler = () => apply();
+    mql?.addEventListener?.("change", handler);
+    window.addEventListener("orientationchange", handler);
+    return () => {
+      mql?.removeEventListener?.("change", handler);
+      window.removeEventListener("orientationchange", handler);
+    };
+  }, [mediaReady, isPhone]);
 
   const capturedOnceRef = useRef(false);
   const stableSinceRef = useRef<number | null>(null);
@@ -554,27 +605,25 @@ export default function AutoFaceScanner({
   const ctx = canvas.getContext("2d");
   if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Cover DOM — fond noir uniquement sur téléphone
+  // Cover DOM — fond noir appliqué partout
   if (cover) {
     // Affiche le voile noir sur tous les appareils, sans qu'il rentre dans le cercle
-const cx = cssW * 0.5;
-const cy = cssH * 0.5;
-const ringWidth = 3;
-const r = cssH * OVAL_RY_N * getCircleScale();
-const hole = r - ringWidth / 2;
+    const cx = cssW * 0.5;
+    const cy = cssH * 0.5;
+    const ringWidth = 3;
+    const r = cssH * OVAL_RY_N * getCircleScale();
+    const hole = r - ringWidth / 2;
 
-// Fond noir appliqué partout (mobile + PC)
-cover.style.left = `${left}px`;
-cover.style.top = `${top}px`;
-cover.style.width = `${cssW}px`;
-cover.style.height = `${cssH}px`;
-cover.style.backgroundColor = "var(--bg)";
+    cover.style.left = `${left}px`;
+    cover.style.top = `${top}px`;
+    cover.style.width = `${cssW}px`;
+    cover.style.height = `${cssH}px`;
+    cover.style.backgroundColor = "var(--bg)";
 
-// masque qui s’arrête exactement au bord intérieur du cercle
-const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole}px, black ${hole + 1}px)`;
-(cover.style as any).WebkitMaskImage = mask;
-(cover.style as any).maskImage = mask;
-
+    // masque qui s’arrête exactement au bord intérieur du cercle
+    const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole}px, black ${hole + 1}px)`;
+    (cover.style as any).WebkitMaskImage = mask;
+    (cover.style as any).maskImage = mask;
   }
 }, []);
 
@@ -763,6 +812,119 @@ const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent $
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
+  }, []);
+
+  /** --- AJOUT: helper de capture orientation-correcte + miroir + (optionnel) clip cercle --- */
+  const captureAligned = useCallback(async (
+    mode: "full-portrait" | "circle-png" = "full-portrait"
+  ): Promise<{ blob: Blob; dataUrl: string } | null> => {
+    const video = videoRef.current;
+    const hostCanvas = canvasRef.current;
+    if (!video || !hostCanvas) return null;
+
+    const W = hostCanvas.clientWidth;
+    const H = hostCanvas.clientHeight;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+
+    // 1) Essai ImageCapture (qualité capteur)
+    try {
+      const stream: MediaStream | undefined = (webcamRef.current as any)?.stream;
+      const track = stream?.getVideoTracks?.()[0];
+      if (track && "ImageCapture" in window) {
+        // @ts-ignore
+        const cap = new (window as any).ImageCapture(track);
+        const photoBlob: Blob = await cap.takePhoto();
+        let bitmap: ImageBitmap | null = null;
+        try { bitmap = await createImageBitmap(photoBlob); } catch { bitmap = null; }
+
+        // si createImageBitmap indispo, fallback plus bas
+        if (bitmap) {
+          const out = document.createElement("canvas");
+          if (mode === "circle-png") {
+            const r = H * OVAL_RY_N * getCircleScale();
+            const side = Math.max(2 * r, 1);
+            out.width = Math.round(side * dpr);
+            out.height = Math.round(side * dpr);
+          } else {
+            out.width  = Math.round(W * dpr);
+            out.height = Math.round(H * dpr);
+          }
+          const ctx = out.getContext("2d")!;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+          const scale = Math.min(W / bitmap.width, H / bitmap.height);
+          const drawW = bitmap.width * scale, drawH = bitmap.height * scale;
+          const ox = (W - drawW) / 2, oy = (H - drawH) / 2;
+
+          if (mode === "circle-png") {
+            const cx = W * 0.5, cy = H * 0.5;
+            const r = H * OVAL_RY_N * getCircleScale();
+            ctx.save();
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+          }
+
+          if (MIRRORED_VIEW) {
+            ctx.save();
+            ctx.translate(W, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(bitmap, ox, oy, drawW, drawH);
+            ctx.restore();
+          } else {
+            ctx.drawImage(bitmap, ox, oy, drawW, drawH);
+          }
+
+          if (mode === "circle-png") ctx.restore();
+
+          const type = mode === "circle-png" ? "image/png" : "image/jpeg";
+          const blob = await new Promise<Blob>((res) => out.toBlob(b => res(b!), type, 0.98)!);
+          const dataUrl = await new Promise<string>((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result as string); fr.readAsDataURL(blob); });
+          return { blob, dataUrl };
+        }
+      }
+    } catch {
+      // on tombera sur le fallback
+    }
+
+    // 2) Fallback: dessiner la frame <video> telle qu'affichée
+    const out = document.createElement("canvas");
+    if (mode === "circle-png") {
+      const r = H * OVAL_RY_N * getCircleScale();
+      const side = Math.max(2 * r, 1);
+      out.width = Math.round(side * dpr);
+      out.height = Math.round(side * dpr);
+    } else {
+      out.width  = Math.round(W * dpr);
+      out.height = Math.round(H * dpr);
+    }
+    const ctx = out.getContext("2d")!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const geom = getDisplayedVideoRect(video, W, H);
+    const { drawW, drawH, offsetX: ox, offsetY: oy } = geom;
+
+    if (mode === "circle-png") {
+      const cx = W * 0.5, cy = H * 0.5;
+      const r = H * OVAL_RY_N * getCircleScale();
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+    }
+
+    if (MIRRORED_VIEW) {
+      ctx.save();
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, ox, oy, drawW, drawH);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, ox, oy, drawW, drawH);
+    }
+
+    if (mode === "circle-png") ctx.restore();
+
+    const type = mode === "circle-png" ? "image/png" : "image/jpeg";
+    const blob = await new Promise<Blob>((res) => out.toBlob(b => res(b!), type, 0.98)!);
+    const dataUrl = await new Promise<string>((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result as string); fr.readAsDataURL(blob); });
+    return { blob, dataUrl };
   }, []);
 
   /** Démarre la détection dès que la vidéo est prête */
@@ -1158,14 +1320,15 @@ const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent $
               setReady(true);
             }
 
-            // Capture (après stabilité + clignement)
+            // --- Capture (après stabilité + clignement) — ORIENTATION-CORRECTE ---
             if (captureOk && hold >= STABLE_HOLD_MS && !capturedOnceRef.current) {
               capturedOnceRef.current = true;
               try {
-                const dataUrl = webcamRef.current?.getScreenshot();
-                if (dataUrl) {
-                  const blob = await fetch(dataUrl).then((r) => r.blob());
-                  onCapture({ dataUrl, blob });
+                const result = await captureAligned("full-portrait"); // ou "circle-png"
+                if (result) {
+                  onCapture(result);
+                } else {
+                  capturedOnceRef.current = false; // retry
                 }
               } catch {
                 capturedOnceRef.current = false; // retry
@@ -1242,14 +1405,14 @@ const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent $
       chinActiveRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mediaReady, width, height, eyeOpenThreshold, drawOverlay, syncCanvasToVideo, scrollIntoViewPolitely, onCapture, computeHumanRatio, computeHumanRatioInEllipse, computeSkinRatioInEllipseFromVideo, computeBandHumanRatio]);
+  }, [mediaReady, width, height, eyeOpenThreshold, drawOverlay, syncCanvasToVideo, scrollIntoViewPolitely, onCapture, computeHumanRatio, computeHumanRatioInEllipse, computeSkinRatioInEllipseFromVideo, computeBandHumanRatio, captureAligned]);
 
   /** Overlay de PRÉ-CHARGEMENT (jusqu’au 1er rendu MediaPipe) */
   useEffect(() => {
     const canvas = canvasRef.current;
     const videoEl = (webcamRef.current?.video as HTMLVideoElement) || null;
 
-    if (!canvas || !videoEl || !mediaReady || ready) return;
+    if (!canvas || !videoEl || !mediaReady || !isPhone && ready) return;
 
     let cancelled = false;
 
@@ -1279,30 +1442,32 @@ const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent $
       if (preRafIdRef.current) cancelAnimationFrame(preRafIdRef.current);
       preRafIdRef.current = null;
     };
-  }, [mediaReady, ready, syncCanvasToVideo, drawPreloadOverlay]);
+  }, [mediaReady, ready, isPhone, syncCanvasToVideo, drawPreloadOverlay]);
 
   useEffect(() => { scrollIntoViewPolitely(); }, [scrollIntoViewPolitely]);
+
   // Contraintes caméra: portrait sur téléphone, paysage sur ordinateur portable
   const computedVideoConstraints: MediaTrackConstraints = isPhone
     ? {
         facingMode: "user",
         width:  { ideal: 720,  max: 1280 },
         height: { ideal: 1280, max: 1920 },
+        aspectRatio: { ideal: 9/16 },
         frameRate: { ideal: 30, max: 60 },
       }
     : {
         facingMode: "user",
         width:  { ideal: IDEAL_W, max: 9999 },
         height: { ideal: IDEAL_H, max: 9999 },
+        aspectRatio: { ideal: 16/9 },
         frameRate: { ideal: 30, max: 60 },
       };
-
 
   return (
     <div
       ref={rootRef}
       className="relative w-full max-w=[min(92vw,1280px)]"
-      style={{ aspectRatio: `${width}/${height}` }}
+      style={{ aspectRatio: isPhone ? "9 / 16" : `${width}/${height}` }}
     >
       {/* Vidéo (miroir pour selfie) */}
       <Webcam

@@ -30,9 +30,9 @@ const STABLE_HOLD_MS = 900;
 const OVAL_W_N = OVAL_RX_N * 2;
 const OVAL_H_N = OVAL_RY_N * 2;
 const MIN_FACE_WIDTH_N  = OVAL_W_N * 0.60;
-const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.40;
+const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.50;
 const MIN_FACE_HEIGHT_N = OVAL_H_N * 0.60;
-const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.40;
+const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.50;
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;

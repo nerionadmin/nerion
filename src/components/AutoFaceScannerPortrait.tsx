@@ -20,8 +20,8 @@ const MP_FM_VER = "0.4.1633559619";
 /** UX & règles — on garde les mêmes pour conserver le même “ressenti” */
 const MIRRORED_VIEW = true;
 // Ellipse de centrage (même rigidité pour éviter de retuner toutes les bornes)
-const OVAL_RX_N = 0.18;
-const OVAL_RY_N = 0.28;
+const OVAL_RX_N = 0.23;
+const OVAL_RY_N = 0.35;
 const CENTER_STRICTNESS = 0.90;
 
 const STABLE_HOLD_MS = 900;
@@ -30,9 +30,9 @@ const STABLE_HOLD_MS = 900;
 const OVAL_W_N = OVAL_RX_N * 2;
 const OVAL_H_N = OVAL_RY_N * 2;
 const MIN_FACE_WIDTH_N  = OVAL_W_N * 0.60;
-const MAX_FACE_WIDTH_N  = OVAL_W_N * 0.96;
+const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.20;
 const MIN_FACE_HEIGHT_N = OVAL_H_N * 0.60;
-const MAX_FACE_HEIGHT_N = OVAL_H_N * 0.96;
+const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.20;
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;
@@ -634,7 +634,7 @@ export default function AutoFaceScannerPortrait({
       }
 
       // Texte d’état
-      ctx.font = `${Math.max(14, Math.round(W * 0.028))}px system-ui, -apple-system, Segoe UI, Roboto`;
+      ctx.font = `${Math.max(18, Math.round(W * 0.038))}px system-ui, -apple-system, Segoe UI, Roboto`;
       ctx.fillStyle = ringColor;
       ctx.textAlign = "center";
       ctx.fillText(statusText, cx, Math.min(H - 8, cy + r + 36));

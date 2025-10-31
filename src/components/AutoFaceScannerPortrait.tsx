@@ -1225,27 +1225,33 @@ export default function AutoFaceScannerPortrait({
     </div>
     <div
       ref={rootRef}
-      className="relative w-full max-w=[min(92vw,1280px)]"
+      className="relative w-full max-w-[min(92vw,1280px)]"
       style={{ aspectRatio: `${width}/${height}` }} // 9:16 par défaut
     >
       {/* Vidéo (miroir pour selfie) */}
       <Webcam
-        ref={webcamRef}
-        audio={false}
-        mirrored={MIRRORED_VIEW}
-        onUserMedia={() => setMediaReady(true)}
-        onUserMediaError={() => setMediaReady(false)}
-        screenshotFormat="image/jpeg"
-        screenshotQuality={1}
-        forceScreenshotSourceSize
-        videoConstraints={{
-          facingMode: "user",
-          width:  { ideal: IDEAL_W, max: 9999 },   // <<< portrait
-          height: { ideal: IDEAL_H, max: 9999 },  // <<< portrait
-          frameRate: { ideal: 30, max: 60 },
-        }}
-        className="w-full h-full object-contain"
-      />
+  ref={webcamRef}
+  audio={false}
+  mirrored={MIRRORED_VIEW}
+  onUserMedia={() => setMediaReady(true)}
+  onUserMediaError={() => setMediaReady(false)}
+  screenshotFormat="image/jpeg"
+  screenshotQuality={1}
+  forceScreenshotSourceSize
+  videoConstraints={{
+    facingMode: "user",
+    width: { ideal: 720 },
+    height: { ideal: 1280 },
+    aspectRatio: 9 / 16,
+    frameRate: { ideal: 30 },
+  }}
+  className="w-full h-full object-cover"
+  style={{
+    objectFit: "cover",
+    transform: "rotate(0deg)",
+    transformOrigin: "center center",
+  }}
+/>
 
       {/* Cover DOM : masque tout sauf le cercle */}
       <div

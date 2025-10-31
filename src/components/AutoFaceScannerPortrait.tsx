@@ -500,39 +500,39 @@ export default function AutoFaceScannerPortrait({
     if (canvas.height !== pxH) canvas.height = pxH;
     const ctx = canvas.getContext("2d");
     if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+// Cover DOM
+if (cover) {
+  cover.style.left = `${left}px`;
+  cover.style.top = `${top}px`;
+  cover.style.width = `${cssW}px`;
+  cover.style.height = `${cssH}px`;
 
-    // Cover DOM
-    if (cover) {
-      cover.style.left = `${left}px`;
-      cover.style.top = `${top}px`;
-      cover.style.width = `${cssW}px`;
-      cover.style.height = `${cssH}px`;
+  const cx = cssW * 0.5;
+  const cy = cssH * 0.5;
+  const ringWidth = 3;
+  const r = Math.min(cssW, cssH) * CIRCLE_R_FRACTION;
 
-      const cx = cssW * 0.5;
-      const cy = cssH * 0.5;
-      const ringWidth = 3;
-      const r = Math.min(cssW, cssH) * CIRCLE_R_FRACTION;
-      const hole = r + ringWidth / 2 + 1;
+  // Rayon externe exact du cercle (pas à l’intérieur)
+  const outerR = r + ringWidth / 2;
+  const holePx = Math.round(outerR * dpr) / dpr;
 
-      // aligne le trou exactement sur le bord externe de l’anneau, arrondi au pixel device
-      // Trou du masque parfaitement aligné avec le bord externe du cercle
-const outerR = r + ringWidth / 2;
-const holePx = Math.round(outerR * dpr) / dpr;
+  // Masque net : le noir commence juste à l’extérieur du bord transparent
+  // et couvre toute la zone visible sans déborder ni laisser de bande
+  const mask = `radial-gradient(
+    circle ${holePx}px at ${cx}px ${cy}px,
+    transparent ${holePx + 0.2}px,
+    var(--bg) ${holePx + 0.3}px,
+    var(--bg) 100%
+  )`;
 
-// Masque opaque à l’extérieur, sans rentrer dans le cercle
-const mask = `radial-gradient(circle ${holePx}px at ${cx}px ${cy}px, transparent ${holePx}px, black ${holePx + 4}px)`;
-
-// Application du masque sans répétition
-(cover.style as any).WebkitMaskImage = mask;
-(cover.style as any).maskImage = mask;
-(cover.style as any).WebkitMaskRepeat = "no-repeat";
-(cover.style as any).maskRepeat = "no-repeat";
-
-     (cover.style as any).WebkitMaskImage = mask;
-     (cover.style as any).maskImage = mask;
-     (cover.style as any).WebkitMaskRepeat = "no-repeat";
-     (cover.style as any).maskRepeat = "no-repeat";
-    }
+  // Application du masque (sans répétition ni défaut de bord)
+  (cover.style as any).WebkitMaskImage = mask;
+  (cover.style as any).maskImage = mask;
+  (cover.style as any).WebkitMaskRepeat = "no-repeat";
+  (cover.style as any).maskRepeat = "no-repeat";
+  (cover.style as any).WebkitMaskSize = "100% 100%";
+  (cover.style as any).maskSize = "100% 100%";
+}
   }, []);
 
   // -------- Overlay (anneau + grille + texte) — cercle via min(W,H)

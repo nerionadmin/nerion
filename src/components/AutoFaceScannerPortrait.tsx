@@ -30,9 +30,9 @@ const STABLE_HOLD_MS = 900;
 const OVAL_W_N = OVAL_RX_N * 2;
 const OVAL_H_N = OVAL_RY_N * 2;
 const MIN_FACE_WIDTH_N  = OVAL_W_N * 0.60;
-const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.30;
+const MAX_FACE_WIDTH_N  = OVAL_W_N * 1.40;
 const MIN_FACE_HEIGHT_N = OVAL_H_N * 0.60;
-const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.30;
+const MAX_FACE_HEIGHT_N = OVAL_H_N * 1.40;
 
 /** % de points dans le cercle */
 const INSIDE_RATIO = 0.90;
@@ -514,7 +514,7 @@ export default function AutoFaceScannerPortrait({
       const r = Math.min(cssW, cssH) * CIRCLE_R_FRACTION;
       const hole = r + ringWidth / 2 + 1;
 
-      const mask = `radial-gradient(circle ${hole}px at ${cx}px ${cy}px, transparent ${hole - 0.5}px, black ${hole}px)`;
+      const mask = `radial-gradient(circle ${hole + 1}px at ${cx}px ${cy}px, transparent ${hole}px, black ${hole + 2}px)`;
       (cover.style as any).WebkitMaskImage = mask;
       (cover.style as any).maskImage = mask;
     }

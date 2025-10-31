@@ -514,9 +514,16 @@ export default function AutoFaceScannerPortrait({
       const r = Math.min(cssW, cssH) * CIRCLE_R_FRACTION;
       const hole = r + ringWidth / 2 + 1;
 
-      const mask = `radial-gradient(circle ${hole + 1}px at ${cx}px ${cy}px, transparent ${hole}px, black ${hole + 2}px)`;
-      (cover.style as any).WebkitMaskImage = mask;
-      (cover.style as any).maskImage = mask;
+      // aligne le trou exactement sur le bord externe de l’anneau, arrondi au pixel device
+      const outerR = r + ringWidth / 2;
+      const holePx = (Math.round(outerR * dpr) + 0.5) / dpr;
+
+      // arête franche (même stop pour transparent et black) + pas de répétition
+      const mask = `radial-gradient(circle ${holePx}px at ${cx}px ${cy}px, transparent ${holePx}px, black ${holePx + 1}px)`;
+     (cover.style as any).WebkitMaskImage = mask;
+     (cover.style as any).maskImage = mask;
+     (cover.style as any).WebkitMaskRepeat = "no-repeat";
+     (cover.style as any).maskRepeat = "no-repeat";
     }
   }, []);
 
@@ -1255,7 +1262,7 @@ export default function AutoFaceScannerPortrait({
       {/* Cover DOM : masque tout sauf le cercle */}
       <div
         ref={coverRef}
-        className="absolute pointer-events-none rounded-2xl"
+        className="absolute pointer-events-none"
         style={{
           left: 0, top: 0,
           backgroundColor: "var(--bg)",
@@ -1268,7 +1275,7 @@ export default function AutoFaceScannerPortrait({
       {/* Canvas au-dessus */}
       <canvas
         ref={canvasRef}
-        className="absolute pointer-events-none rounded-2xl"
+        className="absolute pointer-events-none"
         style={{ left: 0, top: 0, zIndex: 2 }}
       />
     </div>

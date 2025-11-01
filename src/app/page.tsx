@@ -46,6 +46,50 @@ type PhotoItem = {
 export default function OnboardingFlowTest() {
   const supabase = createClientComponentClient();
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
+  // === phone login toggle ===
+  const [showPhoneLogin, setShowPhoneLogin] = useState(false);
+  // === Phone OTP login ===
+const [phone, setPhone] = useState('');
+const [otp, setOtp] = useState('');
+const [otpSent, setOtpSent] = useState(false);
+const [loadingOtp, setLoadingOtp] = useState(false);
+const [otpError, setOtpError] = useState<string | null>(null);
+
+// Send OTP via Supabase
+const sendOtp = async () => {
+  try {
+    setLoadingOtp(true);
+    setOtpError(null);
+    const { error } = await supabase.auth.signInWithOtp({ phone });
+    if (error) throw error;
+    setOtpSent(true);
+  } catch (err: any) {
+    setOtpError(err.message || 'Failed to send code.');
+  } finally {
+    setLoadingOtp(false);
+  }
+};
+
+// Verify OTP code
+const verifyOtp = async () => {
+  try {
+    setLoadingOtp(true);
+    setOtpError(null);
+    const { error } = await supabase.auth.verifyOtp({
+      phone,
+      token: otp,
+      type: 'sms',
+    });
+    if (error) throw error;
+    setShowPhoneLogin(false);
+    setIsAuthed(true);
+  } catch (err: any) {
+    setOtpError(err.message || 'Invalid code. Please try again.');
+  } finally {
+    setLoadingOtp(false);
+  }
+};
+
   const [initialBirthdateFetched, setInitialBirthdateFetched] = useState(false);
   // 🪩 Zoom sur photo (modale)
   const [zoomedPhoto, setZoomedPhoto] = useState<string | null>(null);
@@ -2360,29 +2404,147 @@ useEffect(() => {
   // === Écran de connexion ===
   if (isAuthed === false) {
     return (
-      <main className="flex flex-col items-center justify-center h-screen w-screen bg-[var(--bg)] text-[var(--text)] px-4">
-        <Logo className="h-16 w-auto mb-12 fill-black dark:fill-white" />
-        <h1 className="text-3xl sm:text-4xl font-semibold text-center leading-snug tracking-tight">
-          Sign in to continue
-        </h1>
+      <>
+        <main className="flex flex-col items-center justify-center h-screen w-screen bg-[var(--bg)] text-[var(--text)] px-4">
+          <Logo className="h-16 w-auto mb-12 fill-black dark:fill-white" />
+          <h1 className="text-3xl sm:text-4xl font-semibold text-center leading-snug tracking-tight">
+            Sign in to continue
+          </h1>
+          <button
+            onClick={handleGoogleLogin}
+            className="mt-10 w-64 h-12 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-lg font-semibold transition-all duration-200 ease-out"
+          >
+            Sign in with Google
+          </button>
+          {/* Premium glass button — Phone Auth */}
+          <button
+            onClick={() => setShowPhoneLogin(true)}
+            className="mt-4 w-64 h-12 rounded-xl bg-[color-mix(in srgb,var(--surface-2) 70%,transparent)] border border-[var(--border)] text-[var(--text)] text-lg font-semibold backdrop-blur-[6px] hover:bg-[color-mix(in srgb,var(--surface-2) 90%,white 10%)] transition-all duration-300 ease-out shadow-[0_0_16px_color-mix(in_srgb,var(--accent)_20%,transparent)] hover:shadow-[0_0_24px_color-mix(in_srgb,var(--accent)_40%,transparent)]">
+            <span className="bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] text-transparent bg-clip-text">
+              Sign in with phone
+            </span>
+          </button>
+
+          {themeMounted && (
+            <button
+              onClick={toggleTheme}
+              className="absolute bottom-6 right-6 h-10 px-4 rounded-lg border border-[var(--border)] hover:bg-[var(--hover-surface)] flex items-center gap-2 text-sm"
+              title="Toggle Light/Dark"
+            >
+              {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+              {theme === 'light' ? 'Dark' : 'Light'} mode
+            </button>
+          )}
+        </main>
+
+        {/* === Premium modal for phone auth === */}
+        {showPhoneLogin && (() => {
+  const phoneClean = phone.replace(/\s/g, '');
+  const isValidPhone = /^\+?\d{8,15}$/.test(phoneClean);
+  const canSend = !loadingOtp && isValidPhone;
+  const canVerify = !loadingOtp && otp.trim().length >= 4;
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-[color-mix(in srgb,var(--bg) 65%,transparent)] backdrop-blur-[10px] animate-[fadeIn_0.25s_ease-out]"
+      style={{ WebkitBackdropFilter: 'blur(10px)' as any }}
+    >
+      <div className="relative w-[min(90%,400px)] rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] shadow-[0_12px_48px_color-mix(in_srgb,var(--accent)_25%,transparent)] p-8 text-center animate-[pop-in_0.3s_ease-out]">
         <button
-          onClick={handleGoogleLogin}
-          className="mt-10 w-64 h-12 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-lg font-semibold transition-all duration-200 ease-out"
+          onClick={() => setShowPhoneLogin(false)}
+          className="absolute top-3 right-3 text-[var(--text-muted)] hover:text-[var(--text)] transition"
+          aria-label="Close"
         >
-          Sign in with Google
+          ✕
         </button>
 
-        {themeMounted && (
-          <button
-            onClick={toggleTheme}
-            className="absolute bottom-6 right-6 h-10 px-4 rounded-lg border border-[var(--border)] hover:bg-[var(--hover-surface)] flex items-center gap-2 text-sm"
-            title="Toggle Light/Dark"
-          >
-            {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-            {theme === 'light' ? 'Dark' : 'Light'} mode
-          </button>
+        <h2 className="text-2xl font-semibold mb-2 bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] text-transparent bg-clip-text">
+          Sign in with phone
+        </h2>
+        <p className="text-sm opacity-70 mb-6 auth-transition-enter">
+          {otpSent
+            ? "Enter the 6-digit code we sent you."
+            : "Enter your phone number to get a secure one-time code."}
+        </p>
+
+        {!otpSent ? (
+          <div className="auth-transition-enter">
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && canSend) void sendOtp(); }}
+              placeholder="+212 6 xx xx xx xx"
+              className="phone-input w-full h-12 mb-2 rounded-xl border border-[var(--border)] text-center text-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-all duration-200 ease-out"
+              autoFocus
+            />
+
+            {!isValidPhone && phone.length > 0 && (
+              <div className="mb-1 text-xs text-[var(--danger)] auth-transition-enter">
+                Enter a valid phone number (e.g. +2126…)
+              </div>
+            )}
+
+            <button
+              onClick={sendOtp}
+              disabled={!canSend}
+              className={`mt-2 w-full h-12 rounded-xl text-white text-lg font-semibold transition-all duration-200 ease-out active:phone-button-active ${
+                canSend
+                  ? 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] shadow-[0_0_20px_color-mix(in_srgb,var(--accent)_30%,transparent)]'
+                  : 'bg-[color-mix(in srgb,var(--surface-2) 85%,white 15%)] text-[var(--text-muted)] cursor-not-allowed'
+              }`}
+            >
+              {loadingOtp ? 'Sending…' : 'Send code'}
+            </button>
+          </div>
+        ) : (
+          <div className="auth-transition-enter">
+            <input
+              type="text"
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && canVerify) void verifyOtp(); }}
+              placeholder="6-digit code"
+              className="phone-input w-full h-12 mb-3 rounded-xl border border-[var(--border)] text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-all duration-200 ease-out"
+              maxLength={6}
+              autoFocus
+            />
+
+            <button
+              onClick={verifyOtp}
+              disabled={!canVerify}
+              className={`mt-2 w-full h-12 rounded-xl text-white text-lg font-semibold transition-all duration-200 ease-out active:phone-button-active ${
+                canVerify
+                  ? 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] shadow-[0_0_20px_color-mix(in_srgb,var(--accent)_30%,transparent)]'
+                  : 'bg-[color-mix(in srgb,var(--surface-2) 85%,white 15%)] text-[var(--text-muted)] cursor-not-allowed'
+              }`}
+            >
+              {loadingOtp ? 'Verifying…' : 'Verify code'}
+            </button>
+
+            <button
+              onClick={() => { setOtpSent(false); setOtp(''); }}
+              className="mt-4 text-sm text-[var(--accent)] hover:underline transition-all duration-150"
+            >
+              Change number
+            </button>
+          </div>
         )}
-      </main>
+
+        {otpError && (
+          <div className="mt-3 text-sm text-[var(--danger)] font-medium auth-transition-enter">
+            {otpError}
+          </div>
+        )}
+
+        <div className="mt-5 text-xs opacity-70 auth-transition-enter">
+          Powered by <span className="text-[var(--accent)] font-semibold">AI Identity Verification</span>
+        </div>
+      </div>
+    </div>
+  );
+})()}
+      </>
     );
   }
 

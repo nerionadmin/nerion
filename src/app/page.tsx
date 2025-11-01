@@ -20,6 +20,9 @@ import Logo from '@/components/Logo';
 import FaceScanVisual from '@/components/FaceScanVisual';
 // --- Nouveaux imports pour les deux scanners ---
 import dynamic from 'next/dynamic';
+import PhoneInput, { isValidPhoneNumber, type Country } from 'react-phone-number-input';
+import { getCountryCallingCode } from 'libphonenumber-js';
+import type React from 'react';
 
 const AutoFaceScannerLandscape = dynamic(
   () => import('@/components/AutoFaceScanner'),
@@ -54,6 +57,25 @@ const [otp, setOtp] = useState('');
 const [otpSent, setOtpSent] = useState(false);
 const [loadingOtp, setLoadingOtp] = useState(false);
 const [otpError, setOtpError] = useState<string | null>(null);
+// Auto‑détection du pays (2 lettres : "US", "FR", …)
+const [detectedCountry, setDetectedCountry] = useState<Country | undefined>(undefined);
+
+useEffect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      const res = await fetch('https://ipapi.co/json/');
+      const data: { country_code?: string } = await res.json();
+      if (alive && data?.country_code) {
+        // ipapi renvoie déjà "US", "FR", … (majuscules)
+        setDetectedCountry(data.country_code as Country);
+      }
+    } catch {
+      // pas grave : on laisse undefined, le composant fonctionne quand même
+    }
+  })();
+  return () => { alive = false; };
+}, []);
 
 // Send OTP via Supabase
 const sendOtp = async () => {
@@ -2388,7 +2410,7 @@ useEffect(() => {
 // Close match modal with Escape
 useEffect(() => {
   if (!showMatchGallery) return;
-  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowMatchGallery(false); };
+  const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setShowMatchGallery(false); };
   document.addEventListener('keydown', onKey);
   return () => document.removeEventListener('keydown', onKey);
 }, [showMatchGallery]);
@@ -2439,9 +2461,7 @@ useEffect(() => {
 
         {/* === Premium modal for phone auth === */}
         {showPhoneLogin && (() => {
-  const phoneClean = phone.replace(/\s/g, '');
-  const isValidPhone = /^\+?\d{8,15}$/.test(phoneClean);
-  const canSend = !loadingOtp && isValidPhone;
+  const canSend = !loadingOtp && isValidPhoneNumber(phone || '');
   const canVerify = !loadingOtp && otp.trim().length >= 4;
 
   return (
@@ -2469,21 +2489,49 @@ useEffect(() => {
 
         {!otpSent ? (
           <div className="auth-transition-enter">
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && canSend) void sendOtp(); }}
-              placeholder="+212 6 xx xx xx xx"
-              className="phone-input w-full h-12 mb-2 rounded-xl border border-[var(--border)] text-center text-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-all duration-200 ease-out"
-              autoFocus
-            />
+            
+<PhoneInput
+  id="phone"
+  international
+  country={detectedCountry} /* ✅ pays détecté automatiquement via IP */
+  placeholder="Enter your number"
+  value={phone || undefined}
+  onChange={(v) => setPhone(v || '')}
+  /* ✅ Liste visible uniquement au survol : elle s’ouvre quand on passe la souris */
+countrySelectProps={{
+  tabIndex: -1,
+  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => {
+    const select = e.currentTarget.querySelector('select');
+    if (select) {
+      select.setAttribute('size', '8'); // ✅ ouvre la liste au survol
+      select.focus(); // met le focus pour l'effet fluide
+    }
+  },
+  onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => {
+    const select = e.currentTarget.querySelector('select');
+    if (select) {
+      select.setAttribute('size', '1'); // ✅ referme la liste quand on quitte
+      select.blur();
+    }
+  },
+}}
 
-            {!isValidPhone && phone.length > 0 && (
-              <div className="mb-1 text-xs text-[var(--danger)] auth-transition-enter">
-                Enter a valid phone number (e.g. +2126…)
-              </div>
-            )}
+  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !loadingOtp && isValidPhoneNumber(phone || '')) {
+      e.preventDefault();
+      void sendOtp();
+    }
+  }}
+  aria-invalid={!!phone && !isValidPhoneNumber(phone || '')}
+  className="w-full"
+  autoFocus
+/>
+
+{!isValidPhoneNumber(phone || '') && phone.length > 0 && (
+  <div className="mb-1 text-xs text-[var(--danger)] auth-transition-enter">
+    Enter a valid phone number (e.g. +XX ••• ••• •••)
+  </div>
+)}
 
             <button
               onClick={sendOtp}
@@ -5064,11 +5112,11 @@ function UserBubble({
 
   // Fermer avec Échap
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
+  if (!open) return;
+  const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+  document.addEventListener('keydown', onKey);
+  return () => document.removeEventListener('keydown', onKey);
+}, [open]);
 
   const nextTheme = theme === 'light' ? 'dark' : 'light';
   const ThemeIcon = theme === 'light' ? Moon : Sun;

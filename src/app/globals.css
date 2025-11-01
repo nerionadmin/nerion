@@ -21,11 +21,11 @@
   /* Nouvelles variables sémantiques (Nerion – Matching Focus) */
   --bg: #161618; /*#0C0D0F
   --surface: #17191C;       /* surface-1 */
-  --surface-2: #242628; /*#22252B     /* surface-2 (cards/sections) */
+  --surface-2: #242628; /* #22252B */     /* surface-2 (cards/sections) */
   --border: #3A3C3E;
 
   --text: #ECEDEE;
-  --text-muted: #ACACAD; /*#A3A8B0
+  --text-muted: #ACACAD; /* #A3A8B0 */
 
    /* Hover (Dark) */
   --hover-surface: #2f2f30; /* fallback simple si color-mix n'est pas supporté */
@@ -84,7 +84,7 @@
   --warning: #FBBF24;
   --danger:  #F87171;
 
-  --image-border: #3A3C3E; /*#2C2F36
+  --image-border: #3A3C3E; /* #2C2F36 */
 
   /* === Alias rétro-compatibilité (tes variables existantes) === */
   --background: var(--bg);
@@ -95,12 +95,12 @@
 
 /* === LIGHT THEME === */
 .light {
-  --bg: #F8F7F6;               /*#F3F3F1
+  --bg: #F8F7F6;               /* #F3F3F1 */
   --surface: #FFFFFF;           /* surface-1 */
   --surface-2: #FCFCFC;     /* surface-2 (bars/blocks) */
   --border: #D3D3D3;
   --text: #1B1A19; 
-  --text-muted: #8C8C8C; /*#686E76
+  --text-muted: #8C8C8C; /* #686E76 */
 
    /* Hover (Light) */
   --hover-surface: #ececec; /* fallback simple */
@@ -152,7 +152,7 @@
   --warning: #9A6B14;
   --danger:  #B4232A;
 
-  --image-border: #E3E3E3; /*#D9DEE3
+  --image-border: #E3E3E3; /* #D9DEE3 */
 
   /* Alias rétro-compat pour tes variables existantes */
   --background: var(--bg);
@@ -174,3 +174,131 @@ html, body {
   50%      { transform: scale(1.15); }
 }
 .pulse-scale { animation: pulse-scale 1.5s ease-in-out infinite; }
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.auth-transition-enter {
+  animation: fadeSlideUp 0.25s ease-out forwards;
+}
+
+.auth-transition-exit {
+  animation: fadeSlideDown 0.25s ease-in forwards;
+}
+
+.phone-input {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  transition: all 0.25s ease-in-out;
+}
+
+.phone-input:focus {
+  background: color-mix(in srgb, var(--bg) 85%, var(--accent) 5%);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.phone-button-active {
+  transform: scale(0.97);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* --- react-phone-number-input (flags & bases) --- */
+@import "react-phone-number-input/style.css";
+
+/* --- Nerion Premium Skin for PhoneInput (dark/light ready) --- */
+.PhoneInput {
+  --h: 56px;            /* cohérent avec tes dropdowns */
+  --r: 12px;            /* arrondi Nerion */
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.PhoneInputCountry {
+  height: var(--h);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
+  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.PhoneInputCountry:hover {
+  background: var(--hover-surface);
+}
+.PhoneInputCountrySelect {
+  background: transparent;
+  color: var(--text);
+}
+
+/* Le champ lui-même */
+.PhoneInputInput {
+  height: var(--h);
+  width: 100%;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  color: var(--text);
+  line-height: 1;
+  outline: none;
+  transition: all .20s ease;
+}
+
+/* Focus ring premium (mêmes codes que ta .phone-input:focus) */
+.PhoneInput:focus-within .PhoneInputInput {
+  background: color-mix(in srgb, var(--bg) 85%, var(--accent) 5%);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+/* État invalide (optionnel) */
+.PhoneInputInput[aria-invalid="true"] {
+  border-color: var(--danger-border);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--danger) 25%, transparent);
+}
+
+/* Micro-ajustements des icônes de drapeau pour un rendu net */
+.PhoneInputCountryIcon {
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--border) inset;
+}
+/* Supprime la flèche du sélecteur de pays pour un rendu plus clean */
+.PhoneInputCountrySelectArrow {
+  display: none !important;
+}
+.PhoneInputInput:focus {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent);
+  transform: scale(1.01);
+  transition: all .25s ease;
+}
+/* Bumble-style hover pour la liste des pays */
+.PhoneInputCountrySelect {
+  transition: all 0.25s ease;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.PhoneInputCountrySelect:hover {
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+

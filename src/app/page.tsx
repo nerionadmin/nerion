@@ -21,7 +21,6 @@ import FaceScanVisual from '@/components/FaceScanVisual';
 // --- Nouveaux imports pour les deux scanners ---
 import dynamic from 'next/dynamic';
 import PhoneInput, { isValidPhoneNumber, type Country } from 'react-phone-number-input';
-import { getCountryCallingCode } from 'libphonenumber-js';
 import type React from 'react';
 
 const AutoFaceScannerLandscape = dynamic(
@@ -52,63 +51,129 @@ export default function OnboardingFlowTest() {
   // === phone login toggle ===
   const [showPhoneLogin, setShowPhoneLogin] = useState(false);
   // === Phone OTP login ===
-const [phone, setPhone] = useState('');
+const [phone, setPhone] = useState<string | undefined>(undefined);
 const [otp, setOtp] = useState('');
 const [otpSent, setOtpSent] = useState(false);
 const [loadingOtp, setLoadingOtp] = useState(false);
 const [otpError, setOtpError] = useState<string | null>(null);
+const [otpSubmitting, setOtpSubmitting] = useState<'verify' | 'resend' | null>(null);
+
 // Auto‑détection du pays (2 lettres : "US", "FR", …)
 const [detectedCountry, setDetectedCountry] = useState<Country | undefined>(undefined);
 
 useEffect(() => {
   let alive = true;
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => {
+    try { ctrl.abort(); } catch {}
+  }, 3500);
+
+const apply = (iso2?: string, _calling?: string) => {
+  const c = (iso2 || '').toUpperCase().trim();
+  if (!c) return;
+  try {
+    setDetectedCountry(c as Country);
+  } catch { /* ignore */ }
+};
+
   (async () => {
     try {
-      const res = await fetch('https://ipapi.co/json/');
-      const data: { country_code?: string } = await res.json();
-      if (alive && data?.country_code) {
-        // ipapi renvoie déjà "US", "FR", … (majuscules)
-        setDetectedCountry(data.country_code as Country);
-      }
+      // 1) Essai principal : ipapi.is (OK au Maroc, renvoie calling_code)
+      const res = await fetch('https://api.ipapi.is/?q=', {
+        headers: { 'Accept': 'application/json' },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error('ipapi.is not ok');
+      const data: any = await res.json();
+      if (!alive) return;
+
+      const iso2 =
+        data?.location?.country_code ||     // MA
+        data?.datacenter?.country ||        // backup éventuel
+        (typeof data?.asn?.country === 'string' ? data.asn.country.toUpperCase() : undefined);
+
+      const calling = data?.location?.calling_code; // 212
+
+      apply(iso2, calling);
+      return;
     } catch {
-      // pas grave : on laisse undefined, le composant fonctionne quand même
+      // 2) Fallback léger : ipinfo.io (si dispo) → ISO2
+      try {
+        const r2 = await fetch('https://ipinfo.io/json', {
+          headers: { 'Accept': 'application/json' },
+          signal: ctrl.signal,
+        });
+        if (r2.ok) {
+          const d2: any = await r2.json();
+          if (!alive) return;
+          apply(d2?.country /* ex: "MA" */);
+          return;
+        }
+      } catch { /* ignore */ }
+
+      // 3) Dernier recours : locale navigateur → "fr-FR" -> "FR"
+      const fallback = (navigator.language || '').split('-')[1];
+      apply(fallback);
+    } finally {
+      clearTimeout(timeoutId);
     }
   })();
-  return () => { alive = false; };
-}, []);
 
-// Send OTP via Supabase
+  return () => {
+    alive = false;
+    clearTimeout(timeoutId);
+    try { ctrl.abort(); } catch {}
+  };
+}, []); // ⬅️ IMPORTANT : une seule fois au montage
+
+// Send OTP via Supabase (E.164 safe)
 const sendOtp = async () => {
   try {
+    setOtpSubmitting('resend');
     setLoadingOtp(true);
     setOtpError(null);
-    const { error } = await supabase.auth.signInWithOtp({ phone });
+    const sanitizedPhone = (phone || '').replace(/\s+/g, '');
+    const { error } = await supabase.auth.signInWithOtp({ phone: sanitizedPhone });
     if (error) throw error;
     setOtpSent(true);
   } catch (err: any) {
     setOtpError(err.message || 'Failed to send code.');
   } finally {
     setLoadingOtp(false);
+    setOtpSubmitting(null);
   }
 };
 
-// Verify OTP code
+// Renvoie un nouveau code OTP
+const handleResendOtp = async () => {
+  await sendOtp();   // renvoie un nouveau code
+  setOtp('');        // on repart sur un champ propre
+  setOtpError(null); // on efface l’erreur précédente
+};
+
+// Vérifie le code OTP (et gère les erreurs)
 const verifyOtp = async () => {
   try {
+    setOtpSubmitting('verify');
     setLoadingOtp(true);
     setOtpError(null);
+
+    const sanitizedPhone = (phone || '').replace(/\s+/g, '');
     const { error } = await supabase.auth.verifyOtp({
-      phone,
-      token: otp,
+      phone: sanitizedPhone,
+      token: otp.trim(),
       type: 'sms',
     });
+
     if (error) throw error;
+
     setShowPhoneLogin(false);
     setIsAuthed(true);
   } catch (err: any) {
     setOtpError(err.message || 'Invalid code. Please try again.');
   } finally {
     setLoadingOtp(false);
+    setOtpSubmitting(null);
   }
 };
 
@@ -673,9 +738,19 @@ function roundScorePercent(score?: number | null): number | null {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut({ scope: 'global' });
-    setIsAuthed(false);
-  };
+  await supabase.auth.signOut({ scope: 'global' });
+
+  // Réinitialisation complète du flux phone
+  setPhone(undefined);
+  setOtp('');
+  setOtpSent(false);
+  setOtpError(null);
+
+  // UI
+  setShowPhoneLogin(false);
+  setIsAuthed(false);
+};
+
   // 📡 Canal central — INSERT + UPDATE sur MA ligne dans `matches` (passif, centralisé)
 useEffect(() => {
   if (!isAuthed || !postOnboarding) return;
@@ -2461,8 +2536,8 @@ useEffect(() => {
 
         {/* === Premium modal for phone auth === */}
         {showPhoneLogin && (() => {
-  const canSend = !loadingOtp && isValidPhoneNumber(phone || '');
-  const canVerify = !loadingOtp && otp.trim().length >= 4;
+  const canSend   = !loadingOtp && !!phone && isValidPhoneNumber(phone);
+  const canVerify = !loadingOtp && otp.trim().length === 6;
 
   return (
     <div
@@ -2493,45 +2568,12 @@ useEffect(() => {
 <PhoneInput
   id="phone"
   international
-  country={detectedCountry} /* ✅ pays détecté automatiquement via IP */
-  placeholder="Enter your number"
-  value={phone || undefined}
-  onChange={(v) => setPhone(v || '')}
-  /* ✅ Liste visible uniquement au survol : elle s’ouvre quand on passe la souris */
-countrySelectProps={{
-  tabIndex: -1,
-  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => {
-    const select = e.currentTarget.querySelector('select');
-    if (select) {
-      select.setAttribute('size', '8'); // ✅ ouvre la liste au survol
-      select.focus(); // met le focus pour l'effet fluide
-    }
-  },
-  onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => {
-    const select = e.currentTarget.querySelector('select');
-    if (select) {
-      select.setAttribute('size', '1'); // ✅ referme la liste quand on quitte
-      select.blur();
-    }
-  },
-}}
-
-  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !loadingOtp && isValidPhoneNumber(phone || '')) {
-      e.preventDefault();
-      void sendOtp();
-    }
-  }}
-  aria-invalid={!!phone && !isValidPhoneNumber(phone || '')}
-  className="w-full"
-  autoFocus
+  defaultCountry={detectedCountry}
+  value={phone}
+  onChange={setPhone}
+  onCountryChange={(c) => { if (c) setDetectedCountry(c); }}
+  // countryCallingCodeEditable={false}
 />
-
-{!isValidPhoneNumber(phone || '') && phone.length > 0 && (
-  <div className="mb-1 text-xs text-[var(--danger)] auth-transition-enter">
-    Enter a valid phone number (e.g. +XX ••• ••• •••)
-  </div>
-)}
 
             <button
               onClick={sendOtp}
@@ -2548,27 +2590,38 @@ countrySelectProps={{
         ) : (
           <div className="auth-transition-enter">
             <input
-              type="text"
-              value={otp}
-              onChange={(e) => setOtp(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && canVerify) void verifyOtp(); }}
-              placeholder="6-digit code"
-              className="phone-input w-full h-12 mb-3 rounded-xl border border-[var(--border)] text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-all duration-200 ease-out"
-              maxLength={6}
-              autoFocus
-            />
+  type="text"
+  value={otp}
+  onChange={(e) => { setOtp(e.target.value); if (otpError) setOtpError(null); }}
+  onKeyDown={(e) => {
+    if (e.key === 'Enter') {
+      if (otpError) { void handleResendOtp(); }
+      else if (canVerify) { void verifyOtp(); }
+    }
+  }}
+  placeholder="6-digit code"
+  className="phone-input w-full h-12 mb-3 rounded-xl border border-[var(--border)] text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-all duration-200 ease-out"
+  maxLength={6}
+  autoFocus
+/>
 
             <button
-              onClick={verifyOtp}
-              disabled={!canVerify}
-              className={`mt-2 w-full h-12 rounded-xl text-white text-lg font-semibold transition-all duration-200 ease-out active:phone-button-active ${
-                canVerify
-                  ? 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] shadow-[0_0_20px_color-mix(in_srgb,var(--accent)_30%,transparent)]'
-                  : 'bg-[color-mix(in srgb,var(--surface-2) 85%,white 15%)] text-[var(--text-muted)] cursor-not-allowed'
-              }`}
-            >
-              {loadingOtp ? 'Verifying…' : 'Verify code'}
-            </button>
+  onClick={otpError ? handleResendOtp : verifyOtp}
+  disabled={otpError ? loadingOtp : !canVerify}
+  className={`mt-2 w-full h-12 rounded-xl text-white text-lg font-semibold transition-all duration-200 ease-out active:phone-button-active ${
+    otpError
+      ? (loadingOtp
+          ? 'bg-[var(--accent)] cursor-wait'
+          : 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] shadow-[0_0_20px_color-mix(in_srgb,var(--accent)_30%,transparent)]')
+      : (canVerify
+          ? 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] shadow-[0_0_20px_color-mix(in_srgb,var(--accent)_30%,transparent)]'
+          : 'bg-[color-mix(in srgb,var(--surface-2) 85%,white 15%)] text-[var(--text-muted)] cursor-not-allowed')
+  }`}
+>
+  {loadingOtp
+    ? (otpSubmitting === 'resend' ? 'Sending…' : 'Verifying…')
+    : (otpError ? 'Get a new code' : 'Verify code')}
+</button>
 
             <button
               onClick={() => { setOtpSent(false); setOtp(''); }}
@@ -2580,10 +2633,12 @@ countrySelectProps={{
         )}
 
         {otpError && (
-          <div className="mt-3 text-sm text-[var(--danger)] font-medium auth-transition-enter">
-            {otpError}
-          </div>
-        )}
+  <div className="mt-3 text-sm text-[var(--danger)] font-medium auth-transition-enter">
+    {otpError === 'Token has expired or is invalid'
+      ? 'The verification code is invalid or expired. You can request a new one.'
+      : otpError}
+  </div>
+)}
 
         <div className="mt-5 text-xs opacity-70 auth-transition-enter">
           Powered by <span className="text-[var(--accent)] font-semibold">AI Identity Verification</span>
